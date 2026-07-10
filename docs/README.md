@@ -1,0 +1,43 @@
+# jamypg 문서
+
+jamypg는 JSON 메타데이터를 컴파일한 카탈로그를 근거로 자연어 질문을 안전한
+SQL(PostgreSQL·MySQL·MariaDB)로 변환하도록 돕는 **Text2SQL MCP 서버**입니다.
+이 디렉터리는 대상 독자별 전문 문서를 제공합니다.
+
+## 문서 목록
+
+| 문서 | 대상 | 내용 |
+| --- | --- | --- |
+| [architecture.md](architecture.md) | 아키텍트, 개발자 | 시스템 구조, 카탈로그 컴파일 파이프라인, 핫스왑, 트랜스포트 |
+| [mcp-tools-reference.md](mcp-tools-reference.md) | MCP 클라이언트 개발자, LLM 통합 | 26개 MCP 도구 전체 레퍼런스 (파라미터·응답·사용 시점) |
+| [sql-generation-workflow.md](sql-generation-workflow.md) | LLM 통합, 프롬프트 엔지니어 | 질문→SQL 표준 워크플로 10단계와 엔드투엔드 예시 |
+| [validation-rules.md](validation-rules.md) | LLM 통합, 운영자 | validate_sql 오류/경고 코드 35종 카탈로그와 수정 방법 |
+| [datasets.md](datasets.md) | 운영자, 데이터 관리자 | 18개 데이터셋 스키마·작성 규칙·예시 (라이브: `list_datasets`) |
+| [rest-api.md](rest-api.md) | 관리도구 개발자, 운영자 | REST 관리 API, 인증, curl 예시 (라이브: `/docs` Swagger) |
+| [db-connector.md](db-connector.md) | 운영자, DBA | DB 실행 커넥터: PostgreSQL/MySQL/MariaDB 순수 Go 드라이버, DB 프로파일, 실행 파이프라인, 장애 대응, 메트릭 |
+| [auth.md](auth.md) | 운영자, 보안 담당 | 인증·권한·MCP 키: Postgres 메타 DB, 로컬/Keycloak SSO 로그인, 역할·프로파일 권한, MCP 키 라이프사이클 |
+| [operations.md](operations.md) | 운영자, SRE | 배포, 모니터링, 백업/복원, 피드백 학습 루프, 트러블슈팅 |
+| [evaluation.md](evaluation.md) | QA, 운영자 | 골든셋 평가 체계, 지표 정의, CI 통합, 골든셋 확장 |
+| [security.md](security.md) | 보안 담당자 | 읽기전용 정책, PII 차단, 인증, 감사 로그, 위협 모델 |
+| [development.md](development.md) | 개발자 | 빌드/테스트, 코드 구조, 확장 포인트 (도구·데이터셋·룰 추가법) |
+| [json-data-tool-map.md](json-data-tool-map.md) | (레거시) | v0.1 시점 스냅샷 — [datasets.md](datasets.md)로 대체됨 |
+
+## 빠른 시작별 진입점
+
+- **MCP 클라이언트를 붙이려면**: [mcp-tools-reference.md](mcp-tools-reference.md) → [sql-generation-workflow.md](sql-generation-workflow.md)
+- **메타데이터를 관리하려면**: 웹 콘솔 `/admin` → [datasets.md](datasets.md)
+- **운영 배포하려면**: 릴리즈의 `DEPLOY-OFFLINE.md` → [operations.md](operations.md)
+- **정확도를 검증하려면**: [evaluation.md](evaluation.md)
+- **코드를 고치려면**: [architecture.md](architecture.md) → [development.md](development.md)
+
+## 살아있는 문서 (서버가 직접 제공)
+
+정적 문서와 별개로, 실행 중인 서버가 항상 최신 상태를 제공합니다:
+
+| 경로/도구 | 내용 |
+| --- | --- |
+| `GET /docs` | Swagger UI (REST API 문서 + Try it out) |
+| `GET /admin` | 데이터셋 관리 콘솔 (사용 가이드 내장) |
+| MCP `list_datasets` | 데이터셋 레지스트리 + 라이브 상태 |
+| MCP `get_catalog_health` | 카탈로그 컴파일 상태·이슈 |
+| MCP `tools/list` | 도구 스키마 원본 |

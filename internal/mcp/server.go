@@ -1,0 +1,1698 @@
+package mcp
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"jamypg/internal/catalog"
+	"jamypg/internal/dbconn"
+	"jamypg/internal/meta"
+)
+
+const ProtocolVersion = "2025-06-18"
+
+// Version is the JASQL server version, surfaced in serverInfo, /auth/me, and
+// the web UI (sidebar footer).
+const Version = "0.14.1"
+
+type Options struct {
+	Endpoint       string
+	AllowedOrigins []string
+	Stateful       bool
+	SSEPost        bool
+	AdminToken     string // when set, mutating /api/* endpoints require it
+}
+
+type Server struct {
+	catalogPtr   atomic.Pointer[catalog.Catalog]
+	Options      Options
+	DB           *dbconn.Manager
+	Meta         *meta.Service // nil = standalone mode (auth disabled)
+	OIDC         *OIDCProvider // nil = SSO disabled
+	mu           sync.Mutex
+	dataMu       sync.Mutex        // serializes dataset mutations + catalog reloads
+	settingsMu   sync.RWMutex      // guards Options.AdminToken/AllowedOrigins/OIDC live updates
+	bootDefaults map[string]string // flag/env setting values captured at EnableMeta
+	sessions     map[string]time.Time
+	events       map[string]uint64
+	// pendingClar tracks blocking clarification questions per MCP session:
+	// prepare_sql_context sets them when it withholds the skeleton and clears
+	// them once the (re-)call succeeds; run_sql_safely refuses to execute
+	// while any remain, closing the "ignore the question and run anyway" hole.
+	pendingClar map[string][]string
+	queryCache  *resultCache // TTL result cache for repeated identical queries
+	asyncJobs   *asyncJobStore
+}
+
+// cat returns the current catalog; dataset tools swap it atomically so
+// in-flight requests keep a consistent snapshot.
+func (s *Server) cat() *catalog.Catalog {
+	return s.catalogPtr.Load()
+}
+
+func (s *Server) setCatalog(c *catalog.Catalog) {
+	s.catalogPtr.Store(c)
+}
+
+type rpcMessage struct {
+	JSONRPC string           `json:"jsonrpc,omitempty"`
+	ID      *json.RawMessage `json:"id,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
+}
+
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+func NewServer(c *catalog.Catalog, opts Options) *Server {
+	if opts.Endpoint == "" {
+		opts.Endpoint = "/mcp"
+	}
+	s := &Server{
+		Options:     opts,
+		DB:          dbconn.NewManager(c.DataDir),
+		sessions:    map[string]time.Time{},
+		events:      map[string]uint64{},
+		pendingClar: map[string][]string{},
+		queryCache:  newResultCache(),
+		asyncJobs:   newAsyncJobStore(),
+	}
+	s.setCatalog(c)
+	return s
+}
+
+func (s *Server) Register(mux *http.ServeMux) {
+	mux.HandleFunc(s.Options.Endpoint, s.handleMCP)
+	mux.HandleFunc("/healthz", s.handleHealth)
+	s.registerAuth(mux)
+	s.registerAuthAPI(mux)
+	s.registerAdmin(mux)
+	s.registerDBAPI(mux)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "ok",
+		"endpoint": s.Options.Endpoint,
+		"catalog":  s.cat().Summary(),
+	})
+}
+
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.validateOrigin(r) {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
+	if r.Method == http.MethodOptions {
+		s.writeCORS(w, r)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.writeCORS(w, r)
+	// Session id rides the context in every mode: activity correlation and
+	// the clarification gate both key on it.
+	if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
+		r = r.WithContext(withSession(r.Context(), sid))
+	}
+	// With the meta DB active, MCP over HTTP requires an authenticated
+	// identity (MCP key / session / master token); the resolved user rides
+	// the context so tools can enforce per-profile permissions and audit.
+	if s.authEnabled() {
+		u, err := s.authenticate(r)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="jamypg-mcp"`)
+			http.Error(w, "authentication required: pass an MCP key via Authorization: Bearer jsk_... or X-MCP-Key (manage keys at /admin/keys)", http.StatusUnauthorized)
+			return
+		}
+		r = r.WithContext(withUser(r.Context(), u))
+	} else if strings.TrimSpace(s.Options.AdminToken) != "" {
+		// Standalone with a master token set: the same token that guards
+		// mutating REST endpoints must also gate mutating/DB-executing MCP
+		// tools over HTTP, so tools/call can't be an unauthenticated bypass.
+		// Read-only tools stay open. stdio has no headers and is treated as
+		// locally trusted (handleRequest runs without this flag).
+		r = r.WithContext(withHTTPAdmin(r.Context(), s.checkMasterToken(r)))
+	}
+	switch r.Method {
+	case http.MethodPost:
+		s.handlePost(w, r)
+	case http.MethodGet:
+		s.handleGet(w, r)
+	case http.MethodDelete:
+		s.handleDelete(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	if err := validateProtocolHeader(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	var msg rpcMessage
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20))
+	if err := dec.Decode(&msg); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "parse error", err.Error()))
+		return
+	}
+	if msg.JSONRPC != "" && msg.JSONRPC != "2.0" {
+		writeJSON(w, http.StatusBadRequest, errorResponse(msg.ID, -32600, "invalid request", "jsonrpc must be 2.0"))
+		return
+	}
+	// Session handling is lenient: a known Mcp-Session-Id refreshes its
+	// timestamp, but requests without one (or with an unknown/expired one)
+	// are still served. Several MCP clients (qwen-code, opencode, ...) do
+	// not echo the session header back, and rejecting them with 400
+	// "missing or unknown Mcp-Session-Id" breaks tools/list entirely.
+	s.touchSession(r)
+	if msg.Method == "" || msg.ID == nil {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	resp := s.handleRequest(r.Context(), msg)
+	if msg.Method == "initialize" && s.Options.Stateful && resp.Error == nil {
+		sessionID := s.newSession()
+		w.Header().Set("Mcp-Session-Id", sessionID)
+	}
+	w.Header().Set("MCP-Protocol-Version", ProtocolVersion)
+	if s.Options.SSEPost || wantsSSE(r) {
+		s.writeSSEResponse(w, r, resp)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
+	if err := validateProtocolHeader(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !accepts(r, "text/event-stream") && !accepts(r, "*/*") {
+		http.Error(w, "Accept must include text/event-stream", http.StatusNotAcceptable)
+		return
+	}
+	sessionID := "stateless"
+	if s.Options.Stateful {
+		if id, ok := s.sessionFromRequest(r); ok {
+			sessionID = id
+		}
+		// no session header is tolerated: stream proceeds with a shared
+		// stateless event-ID space for compatibility with lenient clients
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("MCP-Protocol-Version", ProtocolVersion)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	s.writeSSEEvent(w, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/message",
+		"params": map[string]any{
+			"level":  "info",
+			"logger": "jamypg",
+			"data":   "stream opened",
+		},
+	})
+	flusher.Flush()
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.Options.Stateful {
+		http.Error(w, "sessions disabled", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.Header.Get("Mcp-Session-Id")
+	if id == "" {
+		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	delete(s.sessions, id)
+	delete(s.events, id)
+	delete(s.pendingClar, id)
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleRequest(ctx context.Context, msg rpcMessage) rpcResponse {
+	switch msg.Method {
+	case "initialize":
+		return resultResponse(msg.ID, s.initializeResult())
+	case "ping":
+		return resultResponse(msg.ID, map[string]any{})
+	case "tools/list":
+		return resultResponse(msg.ID, map[string]any{"tools": s.tools()})
+	case "tools/call":
+		start := time.Now()
+		result, err := s.callTool(ctx, msg.Params)
+		elapsed := time.Since(start)
+		s.auditToolCall(msg.Params, elapsed, err)
+		s.recordMCPActivity(ctx, msg.Params, result, elapsed)
+		if err != nil {
+			return resultResponse(msg.ID, toolError(err.Error()))
+		}
+		return resultResponse(msg.ID, toolResult(result))
+	case "resources/list":
+		return resultResponse(msg.ID, map[string]any{"resources": s.resources()})
+	case "resources/templates/list":
+		return resultResponse(msg.ID, map[string]any{"resourceTemplates": s.resourceTemplates()})
+	case "resources/read":
+		result, err := s.readResource(msg.Params)
+		if err != nil {
+			return errorResponse(msg.ID, -32602, "invalid params", err.Error())
+		}
+		return resultResponse(msg.ID, result)
+	case "prompts/list":
+		return resultResponse(msg.ID, map[string]any{"prompts": s.prompts()})
+	case "prompts/get":
+		result, err := s.getPrompt(msg.Params)
+		if err != nil {
+			return errorResponse(msg.ID, -32602, "invalid params", err.Error())
+		}
+		return resultResponse(msg.ID, result)
+	default:
+		return errorResponse(msg.ID, -32601, "method not found", msg.Method)
+	}
+}
+
+func (s *Server) initializeResult() map[string]any {
+	return map[string]any{
+		"protocolVersion": ProtocolVersion,
+		"capabilities": map[string]any{
+			"tools":     map[string]any{"listChanged": false},
+			"resources": map[string]any{"subscribe": false, "listChanged": false},
+			"prompts":   map[string]any{"listChanged": false},
+			"logging":   map[string]any{},
+		},
+		"serverInfo": map[string]any{
+			"name":    "jamypg-nl2sql-mcp",
+			"version": Version,
+		},
+		"instructions": "Workflow: 1) prepare_sql_context(question) runs the whole front half in one call (analyze → search → metric defs → schema context → join paths → SQL skeleton) and returns one bundle — START HERE. (Only fall back to the individual tools — analyze_question, search_schema, find_filter_columns, resolve_time, get_metric_definition, get_schema_context, get_join_paths, build_sql_skeleton — when you need to refine one part.) 1b) If the response has status=needs_clarification, DO NOT generate SQL: relay each clarifications[].question to the user verbatim (show options with the recommended one marked), then re-call prepare_sql_context(question, clarifications={id: answer-or-option-key}). Advisory items come with safe defaults — proceed but list them as assumptions in the final answer. 2) Fill only the skeleton's /* SLOT */ comments to complete one DB SELECT, using solely the bundle's tables/columns, dictionary metric expressions, and provided join conditions; never expose pii columns and always bound rows. 3) validate_sql passing metrics=metric_names and expected_outputs=expected_output_columns from the bundle (apply fix_hints, max 2 retries); for hard questions generate 2-3 candidates and pick rank_candidates best_sql. 4) explain_sql; if risk=high, regenerate with limit/period constraints instead of executing. 5) run_sql_safely(sql, profile) to execute read-only (discover profiles with list_db_profiles); it refuses with status=clarification_required while blocking clarifications remain unanswered in this session. 6) Return a structured JSON answer: {sql, used_tables, used_columns, applied_metrics, applied_join_paths, applied_filters, assumptions, cautions, validation_result, executable}. 7) record_feedback with the outcome.",
+	}
+}
+
+func (s *Server) tools() []map[string]any {
+	list := []map[string]any{
+		tool("analyze_question", "Analyze a Korean/English NL2SQL question into intent, metrics, dimensions, filters, schema hints, and likely metadata hits. → Usually unnecessary on its own: prepare_sql_context already runs this. → next: search_schema.", objectSchema(map[string]any{"question": str("Natural language question")}, []string{"question"})),
+		tool("retrieve_context", "GraphRAG-style retrieval: seed search (order-preserving) → 1-hop join-graph expansion → append up to 2 graph discoveries (joinable neighbors / value-evidence tables). Every candidate carries 7-signal provenance (semantic, lexical, proximity, joinability, value evidence, usage prior, freshness) plus join paths, business terms, metrics, and value evidence. Golden-set calibrated: table recall@5 = plain search (no regression) + discoveries. prepare_sql_context uses this internally; call directly to inspect WHY tables were chosen.", objectSchema(map[string]any{
+			"question": str("Natural language question"),
+			"top_k":    integer("Number of ranked tables to return (default 6)"),
+		}, []string{"question"})),
+		tool("suggest_join_relations", "Scan the golden set for expected-table pairs with NO join path (the Join Path Recall gaps) and propose candidate join keys from shared key-like columns, as paste-ready relations.json entries for operator review (/admin/editor?ds=relations).", objectSchema(map[string]any{
+			"golden_path": str("Optional golden_queries.json path"),
+		}, nil)),
+		tool("search_schema", "Search catalog tables and columns using compiled metadata, business terms, code dictionaries, and naming hints. → next: get_schema_context / get_join_paths for the chosen tables.", objectSchema(map[string]any{
+			"question":        str("Natural language question or search phrase"),
+			"top_k":           integer("Number of table candidates to return"),
+			"schemas":         arrayOf("string", "Optional schema names to restrict the search to (e.g. as returned by list_datasets/get_catalog_health)"),
+			"include_columns": boolSchema("Return matched columns for each table"),
+			"max_columns":     integer("Maximum matched columns per table"),
+		}, []string{"question"})),
+		tool("get_schema_context", "Build compact SQL-generation context for selected tables or the best tables for a question. → next: build_sql_skeleton, then validate_sql.", objectSchema(map[string]any{
+			"question":              str("Optional question used to select relevant columns"),
+			"tables":                arrayOf("string", "Schema-qualified table names"),
+			"max_columns_per_table": integer("Maximum columns per table in the context"),
+		}, nil)),
+		tool("get_join_paths", "Find recommended join paths from the compiled relation graph. Take ON conditions only from this output; never invent joins. → next: build_sql_skeleton.", objectSchema(map[string]any{
+			"from_table": str("Start table"),
+			"to_tables":  arrayOf("string", "Target tables"),
+			"tables":     arrayOf("string", "Ordered tables; paths are found between adjacent pairs"),
+			"max_depth":  integer("Maximum relation hops"),
+		}, nil)),
+		tool("get_metric_definition", "Infer candidate metric expressions from metadata and naming conventions.", objectSchema(map[string]any{
+			"metric_name": str("Metric or business term"),
+			"top_k":       integer("Number of candidates"),
+		}, []string{"metric_name"})),
+		tool("get_column_stats", "Return metadata-backed column stats: type, null constraint, PK/FK, index, code dictionary, and sample usage count.", objectSchema(map[string]any{
+			"table":  str("Table name"),
+			"column": str("Column name"),
+		}, []string{"table", "column"})),
+		tool("search_examples", "Search golden SQL examples from sql_datasets.json.", objectSchema(map[string]any{
+			"question": str("Natural language question"),
+			"top_k":    integer("Number of examples"),
+			"table":    str("Optional table filter"),
+		}, []string{"question"})),
+		tool("validate_sql", "Statically validate SQL against catalog tables, columns, join graph, PII policy, code-value dictionaries, dialect, and read-only rules. CTE/inline-view aware. Returns structured fix_hints; retry at most twice. Accepts expected_output_columns / metric_names aliases from prepare_sql_context. → next: explain_sql, then run_sql_safely.", objectSchema(map[string]any{
+			"sql":              str("SQL to validate"),
+			"limit":            integer("Preview row limit for bounded_sql"),
+			"metrics":          arrayOf("string", "Dictionary metric names this SQL claims to implement; checked against metric expressions"),
+			"expected_outputs": arrayOf("string", "Business terms (dimensions/metrics from analyze_question expected_output_columns) the SELECT list must cover"),
+		}, []string{"sql"})),
+		tool("explain_sql", "Risk estimate for a query. Always returns the static metadata-based analysis; when a db profile is given it additionally runs a real EXPLAIN (postgres/mysql/mariadb, JSON format) and analyzes the plan for full scans, cartesian joins, oversized row estimates, large sorts, and high cost. If live risk is high, regenerate with period/limit constraints instead of executing.", objectSchema(map[string]any{
+			"sql":     str("SQL to explain"),
+			"limit":   integer("Preview row limit"),
+			"profile": str("DB profile id for a live EXPLAIN PLAN; omit for static-only"),
+		}, []string{"sql"})),
+		tool("list_db_profiles", "List the DB DB connection profiles the caller may use (id, name, masked connect target, pool/policy, driver availability). Call this to discover which profile id to pass to run_sql_safely / explain_sql / run_evaluation. In auth mode only profiles you own, were granted, or that are shared are returned; admins see all.", objectSchema(map[string]any{}, nil)),
+		tool("run_sql_safely", "Validate SQL and, when a db profile is given, execute it read-only against the target DB (postgres/mysql/mariadb) with query timeout, row limit (+truncated flag), PII value masking, a 60s identical-query result cache (cached:true), and audit logging. Before executing it runs a live EXPLAIN plan-approval gate: if the estimated plan risk meets the profile threshold it returns status=plan_approval_required with the plan instead of running — narrow the query, or (only after user approval) re-call with approve_plan=true. Zero rows / NULL-heavy output come back with result_diagnosis hints. Without a profile it stays a dry-run guard returning bounded SQL. Catalog-invalid SQL is never executed.", objectSchema(map[string]any{
+			"sql":             str("SQL to validate/execute"),
+			"limit":           integer("Row limit (capped by the profile's max_rows)"),
+			"profile":         str("DB profile id from db_profiles (see /admin/db); omit for dry-run"),
+			"timeout_seconds": integer("Query timeout override (must be shorter than the profile default)"),
+			"fresh":           boolSchema("true → bypass the 60s result cache and hit the DB"),
+			"approve_plan":    boolSchema("true → bypass the execution-plan approval gate after a prior status=plan_approval_required response; set only with explicit user approval"),
+		}, []string{"sql"})),
+		tool("record_feedback", "Append NL2SQL feedback as JSONL. Successful/adopted SQL is reused for few-shot examples and search boosting on next reload.", objectSchema(map[string]any{
+			"question":          str("Original question"),
+			"analysis":          map[string]any{"type": "object", "description": "analyze_question output", "additionalProperties": true},
+			"tables":            arrayOf("string", "Candidate/used tables"),
+			"columns":           arrayOf("string", "Candidate/used columns"),
+			"generated_sql":     str("Generated SQL"),
+			"validation_errors": map[string]any{"description": "validate_sql errors, if any"},
+			"final_sql":         str("Accepted or corrected SQL"),
+			"executed":          boolSchema("Whether the SQL was actually executed"),
+			"adopted":           boolSchema("Whether the user adopted the result"),
+			"outcome":           str("success, failure, corrected, rejected"),
+			"duration_ms":       map[string]any{"type": "number", "description": "End-to-end latency in ms"},
+			"result_rows":       integer("Row count of the executed result"),
+			"failure_cause":     str("Failure cause classification"),
+			"notes":             str("Manual correction memo"),
+		}, []string{"question", "outcome"})),
+		tool("get_catalog_health", "Return catalog compilation status: load/validation issues, metadata coverage gaps, PII columns, and dictionary sizes.", objectSchema(map[string]any{}, nil)),
+		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
+			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
+			"tables": arrayOf("string", "Optional tables to restrict the search"),
+			"top_k":  integer("Maximum candidates"),
+		}, []string{"values"})),
+		tool("resolve_time", "Parse Korean/English temporal expressions (오늘, 지난달, 최근 3개월, 2025년 6월, 상반기, 전월 대비...) into date ranges, and render column-type-aware SQL conditions for a table's date columns.", objectSchema(map[string]any{
+			"question": str("Question or phrase containing temporal expressions"),
+			"table":    str("Optional table whose date columns should get rendered conditions"),
+		}, []string{"question"})),
+		tool("run_evaluation", "Run the golden-query evaluation set (table/column/metric/join/SQL-validity accuracy). Pass a db profile to additionally execute expected_sql for execution success rate and row-count sanity. Pass retrieval=true for retrieval-stage-only metrics: Table/Column Recall@k, Join Path Recall, Value Evidence Recall, and the graph-vs-plain recall gain.", objectSchema(map[string]any{
+			"golden_path": str("Optional path to golden_queries.json; defaults to <data>/golden_queries.json"),
+			"top_k":       integer("Search depth used for table-selection accuracy"),
+			"profile":     str("Optional db profile id for execution-based checks (postgres/mysql/mariadb)"),
+			"retrieval":   boolSchema("true → retrieval-stage-only recall metrics (no SQL/execution checks)"),
+		}, nil)),
+		tool("learn_from_feedback", "Promote repeated failure patterns into learned rules from BOTH feedback records and the DB execution audit: recurring validation errors, table/column corrections, repeatedly slow tables (>=5s), and recurring execution errors (ORA/TIMEOUT per table). Persists learned_rules.json and hot-applies (search penalties + LEARNED_* validation warnings).", objectSchema(map[string]any{
+			"min_occurrences": integer("Minimum repetitions before a pattern becomes a rule (default 3)"),
+		}, nil)),
+		tool("prepare_sql_context", "★ ONE-CALL PIPELINE: runs analyze_question → search_schema → get_metric_definition → get_schema_context → get_join_paths → build_sql_skeleton in a single call and returns one bundle (analysis, selected_tables, metrics, schema_context, join_paths, skeleton, expected_output_columns, next_step). Start HERE for most questions, then just fill the skeleton's /* SLOT */ markers, call validate_sql, and optionally run_sql_safely. Saves orchestrating 6+ calls and prevents skipping a step.", objectSchema(map[string]any{
+			"question":          str("Natural language question (Korean/English)"),
+			"tables":            arrayOf("string", "Optional explicit tables; defaults to top search hits"),
+			"limit":             integer("Row bound for the skeleton's LIMIT"),
+			"clarifications":    map[string]any{"type": "object", "description": "Answers from a previous needs_clarification response, keyed by clarification id; value may be free text or an option key.", "additionalProperties": map[string]any{"type": "string"}},
+			"previous_question": str("For follow-up turns ('그중 서울만', '이걸 월별로'): the prior question this one refines. Merges context so short refinements work."),
+			"previous_sql":      str("Optional: the SQL produced for previous_question — returned back as previous_sql to refine instead of regenerating from scratch."),
+		}, []string{"question"})),
+		tool("build_sql_skeleton", "Assemble a draft DB SQL frame from vetted parts only: catalog join conditions with aliases, dictionary metric expressions, semantic-type-aware time predicates, and policy filters. Fill the /* SLOT */ comments; do not restructure. → prepare_sql_context already calls this; use it directly only for incremental refinement.", objectSchema(map[string]any{
+			"question": str("Natural language question (drives time/metric/pattern detection)"),
+			"tables":   arrayOf("string", "Selected tables in join order; defaults to top search hits"),
+			"limit":    integer("Row bound for LIMIT"),
+		}, []string{"question"})),
+		tool("rank_candidates", "Rank multiple candidate SQLs with objective server-side signals (validation errors, policy warnings, risk estimate, result-schema coverage, metric conformity) and return them best-first. Use for complex questions: generate 2-3 candidates, then pick best_sql.", objectSchema(map[string]any{
+			"question":         str("Original question, for the audit trail"),
+			"candidates":       arrayOf("string", "Candidate SQL statements (2-5 recommended)"),
+			"expected_outputs": arrayOf("string", "Business terms the SELECT list must cover"),
+			"metrics":          arrayOf("string", "Dictionary metric names the SQL should implement"),
+			"limit":            integer("Row bound used during validation"),
+		}, []string{"candidates"})),
+		tool("suggest_joins", "Discover relation-graph edges missing from the catalog (single-column-PK masters referenced by other tables), ranked by FK/index/type/co-occurrence evidence. Returns overrides.json snippets for OPERATOR REVIEW ONLY — suggestions are never auto-applied.", objectSchema(map[string]any{
+			"tables": arrayOf("string", "Optional scope: only suggest edges touching these tables"),
+			"top_k":  integer("Maximum suggestions (default 20)"),
+		}, nil)),
+		tool("list_datasets", "Describe every JSON dataset this server references: purpose, schema, consuming tools, required/editable flags, live status (present, size, loaded entries, load issues).", objectSchema(map[string]any{}, nil)),
+		tool("get_dataset", "Inspect one dataset: registry description plus the head of its current content.", objectSchema(map[string]any{
+			"name":        str("Dataset name from list_datasets (e.g. glossary, metrics, overrides)"),
+			"sample_rows": integer("Sample entries to return (default 5, max 50)"),
+		}, []string{"name"})),
+		tool("put_dataset", "Replace a dataset's content: validates JSON shape, backs up the current file, writes, recompiles the catalog, and hot-swaps it. Rolls back automatically if compilation fails or (without force) introduces new errors.", objectSchema(map[string]any{
+			"name":    str("Dataset name from list_datasets"),
+			"content": map[string]any{"description": "Full new content (JSON array or object per the dataset schema)"},
+			"force":   boolSchema("Apply even if the new content introduces load errors"),
+		}, []string{"name", "content"})),
+		tool("remove_dataset", "Remove an optional dataset file (backed up first) and hot-reload the catalog. Required or system-managed datasets are refused.", objectSchema(map[string]any{
+			"name": str("Dataset name from list_datasets"),
+		}, []string{"name"})),
+		tool("reload_catalog", "Recompile the catalog from the files on disk and hot-swap it. Use after editing dataset files directly (e.g. via a mounted volume).", objectSchema(map[string]any{}, nil)),
+	}
+	return annotateTools(list)
+}
+
+// annotateTools attaches MCP tool annotations (readOnlyHint / destructiveHint /
+// idempotentHint / openWorldHint) so clients can render hazard cues and pick
+// tools safely. Default is a pure read-only, closed-world catalog lookup;
+// exceptions are the DB-touching tools (openWorldHint) and the operator tools
+// that mutate catalog/feedback state (not read-only).
+func annotateTools(list []map[string]any) []map[string]any {
+	// tools that reach an external DB DB (still read-only SELECTs)
+	dbTouching := map[string]bool{"run_sql_safely": true, "explain_sql": true, "run_evaluation": true}
+	// operator tools that mutate server-side state (not read-only)
+	writers := map[string]struct{ destructive bool }{
+		"put_dataset":         {destructive: true},  // overwrites a dataset
+		"remove_dataset":      {destructive: true},  // deletes a dataset
+		"reload_catalog":      {destructive: false}, // recompiles from disk
+		"learn_from_feedback": {destructive: false},
+		"record_feedback":     {destructive: false},
+	}
+	for _, t := range list {
+		name, _ := t["name"].(string)
+		ann := map[string]any{"title": name}
+		if w, ok := writers[name]; ok {
+			ann["readOnlyHint"] = false
+			ann["destructiveHint"] = w.destructive
+			ann["idempotentHint"] = !w.destructive
+			ann["openWorldHint"] = false
+		} else {
+			ann["readOnlyHint"] = true
+			ann["destructiveHint"] = false
+			ann["idempotentHint"] = true
+			ann["openWorldHint"] = dbTouching[name]
+		}
+		t["annotations"] = ann
+	}
+	return list
+}
+
+// adminOnlyTools are MCP tools that mutate shared server state (catalog,
+// datasets, learned rules) and therefore require the admin role when auth is
+// enabled — the same rule the REST endpoints enforce via requireAdmin.
+var adminOnlyTools = map[string]bool{
+	"put_dataset":         true,
+	"remove_dataset":      true,
+	"reload_catalog":      true,
+	"learn_from_feedback": true,
+}
+
+func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, error) {
+	var req struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, err
+	}
+	// Admin-only tools (dataset mutations, learning) must enforce admin over
+	// MCP too, matching the REST layer. In meta mode this is the admin role;
+	// in standalone mode with -admin-token set it is the master-token flag
+	// (stdio / no-token = locally trusted).
+	if adminOnlyTools[req.Name] && !s.toolActorIsAdmin(ctx) {
+		return map[string]any{
+			"status": "forbidden",
+			"error":  "tool '" + req.Name + "' requires admin privileges",
+		}, nil
+	}
+	switch req.Name {
+	case "analyze_question":
+		var a catalog.AnalyzeRequest
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().AnalyzeQuestion(a), nil
+	case "retrieve_context":
+		var a struct {
+			Question string `json:"question"`
+			TopK     int    `json:"top_k"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().RetrieveContext(a.Question, a.TopK), nil
+	case "suggest_join_relations":
+		var a struct {
+			GoldenPath string `json:"golden_path"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SuggestJoinRelations(a.GoldenPath)
+	case "search_schema":
+		var a catalog.SearchRequest
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SearchSchema(a), nil
+	case "get_schema_context":
+		var a struct {
+			Question           string   `json:"question"`
+			Tables             []string `json:"tables"`
+			MaxColumnsPerTable int      `json:"max_columns_per_table"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SchemaContext(a.Question, a.Tables, a.MaxColumnsPerTable), nil
+	case "get_join_paths":
+		var a catalog.JoinPathRequest
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().GetJoinPaths(a)
+	case "get_metric_definition":
+		var a struct {
+			MetricName string `json:"metric_name"`
+			TopK       int    `json:"top_k"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().MetricDefinition(a.MetricName, a.TopK), nil
+	case "get_column_stats":
+		var a struct {
+			Table  string `json:"table"`
+			Column string `json:"column"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().ColumnStats(a.Table, a.Column), nil
+	case "search_examples":
+		var a struct {
+			Question string `json:"question"`
+			TopK     int    `json:"top_k"`
+			Table    string `json:"table"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SearchSamples(a.Question, a.TopK, a.Table), nil
+	case "validate_sql":
+		// Accept `expected_output_columns` as an alias for `expected_outputs`,
+		// since prepare_sql_context returns the former and models often echo it.
+		var a struct {
+			catalog.ValidateRequest
+			ExpectedOutputColumns []string `json:"expected_output_columns,omitempty"`
+			MetricNames           []string `json:"metric_names,omitempty"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if len(a.ExpectedOutputs) == 0 && len(a.ExpectedOutputColumns) > 0 {
+			a.ExpectedOutputs = a.ExpectedOutputColumns
+		}
+		if len(a.Metrics) == 0 && len(a.MetricNames) > 0 {
+			a.Metrics = a.MetricNames
+		}
+		return s.cat().ValidateSQL(a.ValidateRequest), nil
+	case "explain_sql":
+		var a struct {
+			SQL     string `json:"sql"`
+			Limit   int    `json:"limit"`
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		res := s.cat().ExplainSQL(catalog.ValidateRequest{SQL: a.SQL, Limit: a.Limit})
+		if a.Profile != "" {
+			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+				res["live_plan_error"] = err.Error()
+				return res, nil
+			}
+			plan, err := s.DB.ExplainPlan(ctx, a.Profile, a.SQL)
+			if err != nil {
+				res["live_plan_error"] = err.Error()
+			} else {
+				res["live_plan"] = plan
+				// 실측 위험이 정적 추정보다 높으면 권장 조치를 승격
+				if plan.Risk == "high" {
+					res["risk"] = "high"
+					res["recommended_action"] = "regenerate_with_constraints"
+				}
+				res["execution_notice"] = "live_plan은 실제 DB EXPLAIN(JSON) 결과입니다. risk=high면 실행하지 말고 suggestions를 반영해 재생성하세요."
+			}
+		}
+		return res, nil
+	case "list_db_profiles":
+		return s.mcpListProfiles(ctx), nil
+	case "run_sql_safely":
+		var a struct {
+			SQL            string `json:"sql"`
+			Limit          int    `json:"limit"`
+			Profile        string `json:"profile"`
+			TimeoutSeconds int    `json:"timeout_seconds"`
+			Fresh          bool   `json:"fresh"`
+			ApprovePlan    bool   `json:"approve_plan"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if ids := s.pendingClarifications(ctx); len(ids) > 0 && a.Profile != "" {
+			return map[string]any{
+				"status":  "clarification_required",
+				"error":   "이 세션에 답변되지 않은 blocking 재질문이 있습니다. 실행 전에 사용자 확인이 필요합니다.",
+				"pending": ids,
+				"notice":  "clarifications의 질문을 사용자에게 전달해 답을 받은 뒤 prepare_sql_context(question, clarifications={...})를 다시 호출하세요. status=ready를 받으면 실행이 허용됩니다.",
+			}, nil
+		}
+		// Authorization before validation: an unauthorized caller must not
+		// receive catalog-validation service (or its error detail) for a
+		// profile-scoped execution request.
+		if a.Profile != "" {
+			// Standalone mode only: executing real SQL over HTTP requires the
+			// master token. In auth mode authorization is the per-profile
+			// check below (owner / shared / use·manage grant / admin).
+			if !s.authEnabled() && !s.toolActorIsAdmin(ctx) {
+				return map[string]any{
+					"status": "forbidden",
+					"error":  "executing SQL against a db profile requires the admin token",
+					"notice": "pass the master admin token (X-Admin-Token).",
+				}, nil
+			}
+			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+				return map[string]any{
+					"status": "forbidden",
+					"error":  err.Error(),
+					"notice": "discover usable profile ids with list_db_profiles; request access from the profile owner/admin.",
+				}, nil
+			}
+		}
+		v := s.cat().ValidateSQL(catalog.ValidateRequest{SQL: a.SQL, Limit: a.Limit})
+		if a.Profile == "" {
+			return map[string]any{
+				"status":       "dry_run_only",
+				"validation":   v,
+				"bounded_sql":  v.BoundedSQL,
+				"rows":         []any{},
+				"notice":       "No db profile given. Configure profiles in /admin/db (dataset db_profiles) and pass profile to execute for real.",
+				"request_time": time.Now().Format(time.RFC3339),
+			}, nil
+		}
+		if !v.Valid {
+			return map[string]any{
+				"status":     "blocked",
+				"error":      "catalog validation failed",
+				"validation": v,
+				"notice":     "invalid SQL is never executed. Apply validation.fix_hints and retry (max 2).",
+			}, nil
+		}
+		mcpUser := userFrom(ctx)
+		execAs := "mcp"
+		if mcpUser != nil {
+			execAs = mcpUser.Username
+		}
+		result, masked, cached, err := s.executeGuarded(ctx, a.Profile, a.SQL, dbconn.ExecOptions{
+			MaxRows:        a.Limit,
+			TimeoutSeconds: a.TimeoutSeconds,
+			User:           execAs,
+			ApprovePlan:    a.ApprovePlan,
+		}, a.Fresh)
+		if err != nil {
+			var gate *dbconn.PlanGateError
+			if errors.As(err, &gate) {
+				return map[string]any{
+					"status":     "plan_approval_required",
+					"validation": map[string]any{"valid": true, "warnings": len(v.Warnings)},
+					"live_plan":  gate.Plan,
+					"threshold":  gate.Threshold,
+					"error":      err.Error(),
+					"notice":     "실행계획 위험도가 임계값 이상입니다. live_plan의 risk_factors/suggestions를 반영해 기간·LIMIT 조건을 좁혀 재생성하는 것을 우선하세요. 위험을 감수하고 그대로 실행해야 한다면 사용자 승인을 받은 뒤 approve_plan=true로 다시 호출하세요.",
+				}, nil
+			}
+			out := map[string]any{
+				"status":     "execution_failed",
+				"validation": v,
+				"error":      err.Error(),
+			}
+			if h := dbHint(err.Error()); h != "" {
+				out["hint"] = h
+			}
+			return out, nil
+		}
+		out := map[string]any{
+			"status":     "executed",
+			"validation": map[string]any{"valid": true, "warnings": len(v.Warnings)},
+			"result":     result,
+		}
+		if cached {
+			out["cached"] = true
+		}
+		if len(masked) > 0 {
+			out["masked_columns"] = masked
+			out["notice"] = "PII 컬럼 값은 마스킹되었습니다."
+		}
+		if d := s.diagnoseResult(a.SQL, result); d != nil {
+			out["result_diagnosis"] = d
+		}
+		return out, nil
+	case "record_feedback":
+		var a map[string]any
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.recordFeedback(a)
+	case "get_catalog_health":
+		return s.cat().Health(), nil
+	case "find_filter_columns":
+		var a struct {
+			Values []string `json:"values"`
+			Tables []string `json:"tables"`
+			TopK   int      `json:"top_k"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().FindFilterColumns(a.Values, a.Tables, a.TopK), nil
+	case "resolve_time":
+		var a struct {
+			Question string `json:"question"`
+			Table    string `json:"table"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().ResolveTime(a.Question, a.Table, time.Now()), nil
+	case "run_evaluation":
+		var a struct {
+			GoldenPath string `json:"golden_path"`
+			TopK       int    `json:"top_k"`
+			Profile    string `json:"profile"`
+			Retrieval  bool   `json:"retrieval"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Retrieval {
+			// retrieval-stage-only metrics: table/column/join/value recall
+			return s.cat().EvaluateRetrieval(a.GoldenPath, a.TopK)
+		}
+		var counter catalog.RowCounter
+		if a.Profile != "" {
+			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+				return nil, err
+			}
+			counter = func(cctx context.Context, sql string) (int64, error) {
+				return s.DB.CountRows(cctx, a.Profile, sql)
+			}
+		}
+		return s.cat().RunEvaluationExec(ctx, a.GoldenPath, a.TopK, counter)
+	case "learn_from_feedback":
+		var a struct {
+			MinOccurrences int `json:"min_occurrences"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().LearnFromFeedback(a.MinOccurrences)
+	case "prepare_sql_context":
+		var a struct {
+			Question         string            `json:"question"`
+			Tables           []string          `json:"tables"`
+			Limit            int               `json:"limit"`
+			Clarifications   map[string]string `json:"clarifications"`
+			PreviousQuestion string            `json:"previous_question"`
+			PreviousSQL      string            `json:"previous_sql"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		bundle := s.cat().PrepareFollowup(a.Question, a.PreviousQuestion, a.PreviousSQL, a.Tables, a.Limit, time.Now(), a.Clarifications)
+		s.trackPendingClarifications(ctx, bundle)
+		// learning loop: a clarification round the user answered is a strong
+		// relevance signal — record it as "corrected" feedback so the chosen
+		// tables gain retrieval usage prior on the next catalog reload.
+		if len(a.Clarifications) > 0 && bundle["status"] == "ready" {
+			if sel, ok := bundle["selected_tables"].([]string); ok && len(sel) > 0 {
+				fb := map[string]any{
+					"question": a.Question, "tables": sel, "outcome": "corrected",
+					"source": "clarification", "clarifications": a.Clarifications,
+				}
+				if _, err := s.recordFeedback(fb); err != nil {
+					log.Printf("clarification feedback record failed: %v", err)
+				}
+			}
+		}
+		return bundle, nil
+	case "build_sql_skeleton":
+		var a struct {
+			Question string   `json:"question"`
+			Tables   []string `json:"tables"`
+			Limit    int      `json:"limit"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().BuildSQLSkeleton(a.Question, a.Tables, a.Limit, time.Now()), nil
+	case "rank_candidates":
+		var a struct {
+			Question        string   `json:"question"`
+			Candidates      []string `json:"candidates"`
+			ExpectedOutputs []string `json:"expected_outputs"`
+			Metrics         []string `json:"metrics"`
+			Limit           int      `json:"limit"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if len(a.Candidates) == 0 {
+			return nil, errors.New("candidates must contain at least one SQL")
+		}
+		return s.cat().RankCandidates(a.Question, a.Candidates, a.ExpectedOutputs, a.Metrics, a.Limit), nil
+	case "suggest_joins":
+		var a struct {
+			Tables []string `json:"tables"`
+			TopK   int      `json:"top_k"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SuggestJoins(a.Tables, a.TopK), nil
+	case "list_datasets":
+		return map[string]any{
+			"data_dir": s.cat().DataDir,
+			"datasets": s.cat().DatasetStatus(),
+			"how_to":   "put_dataset으로 교체(자동 백업·검증·핫스왑), remove_dataset으로 제거, 파일을 직접 수정했다면 reload_catalog 호출. required=true는 제거 불가, editable=false는 시스템 관리 대상.",
+		}, nil
+	case "get_dataset":
+		var a struct {
+			Name       string `json:"name"`
+			SampleRows int    `json:"sample_rows"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().DatasetSample(a.Name, a.SampleRows)
+	case "put_dataset":
+		var a struct {
+			Name    string          `json:"name"`
+			Content json.RawMessage `json:"content"`
+			Force   bool            `json:"force"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.putDataset(a.Name, a.Content, a.Force)
+	case "remove_dataset":
+		var a struct {
+			Name string `json:"name"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.removeDataset(a.Name)
+	case "reload_catalog":
+		return s.reloadCatalog()
+	default:
+		return nil, errors.New("unknown tool: " + req.Name)
+	}
+}
+
+// putDataset replaces a dataset file and hot-swaps the recompiled catalog.
+// The previous file is backed up first; if the new content fails to compile,
+// or introduces new load errors for that file (and force is false), the
+// backup is restored and the old catalog stays active.
+func (s *Server) putDataset(name string, content json.RawMessage, force bool) (map[string]any, error) {
+	s.dataMu.Lock()
+	defer s.dataMu.Unlock()
+	return s.putDatasetLocked(name, content, force)
+}
+
+// putDatasetLocked is the body of putDataset for callers that already hold
+// dataMu (e.g. restoreDataset).
+func (s *Server) putDatasetLocked(name string, content json.RawMessage, force bool) (map[string]any, error) {
+	dataDir := s.cat().DataDir
+	before := datasetErrorCount(s.cat(), name)
+	d, backup, err := catalog.ReplaceDataset(dataDir, name, content)
+	if err != nil {
+		return nil, err
+	}
+	rollback := func(reason string, issues any) (map[string]any, error) {
+		if backup != "" {
+			if rerr := catalog.RestoreDatasetBackup(dataDir, d.File, backup); rerr != nil {
+				return nil, fmt.Errorf("%s; ROLLBACK ALSO FAILED (%v) — restore %s manually", reason, rerr, backup)
+			}
+		} else {
+			_ = os.Remove(filepath.Join(dataDir, d.File))
+		}
+		if cat, lerr := catalog.Load(dataDir); lerr == nil {
+			s.setCatalog(cat)
+		}
+		return map[string]any{
+			"applied": false, "dataset": d.Name, "reason": reason,
+			"issues": issues, "backup": backup,
+			"hint": "content를 스키마에 맞게 수정하거나, 오류를 감수하려면 force=true로 재시도하세요. 스키마: " + d.Schema,
+		}, nil
+	}
+	cat, err := catalog.Load(dataDir)
+	if err != nil {
+		return rollback("new content failed catalog compilation: "+err.Error(), nil)
+	}
+	var newIssues []catalog.LoadIssue
+	for _, i := range cat.Issues {
+		if i.Source == d.File && i.Level == "error" {
+			newIssues = append(newIssues, i)
+		}
+	}
+	if len(newIssues) > before && !force {
+		return rollback("new content introduces load errors", newIssues)
+	}
+	s.setCatalog(cat)
+	// meta mode: persist the confirmed content to the DB (source of truth).
+	// The file already holds it (used for validation); only commit to DB on
+	// success so rollback stays purely file-based.
+	if s.datasetsInDB() {
+		if perr := s.Meta.Store.PutDataset(context.Background(), d.Name, content, "admin"); perr != nil {
+			return nil, fmt.Errorf("catalog updated but meta DB write failed: %w", perr)
+		}
+	}
+	res := map[string]any{
+		"applied": true, "dataset": d.Name, "file": d.File,
+		"backup": backup,
+		"loaded": cat.Summary(),
+		"status": "catalog hot-swapped; no restart needed",
+		"stored": storedNote(s.datasetsInDB()),
+	}
+	if len(newIssues) > 0 {
+		res["issues"] = newIssues
+		res["warning"] = "load errors present (force applied)"
+	}
+	return res, nil
+}
+
+func storedNote(inDB bool) string {
+	if inDB {
+		return "postgres meta DB (jamypg_datasets)"
+	}
+	return "file (db_profiles dir)"
+}
+
+func (s *Server) removeDataset(name string) (map[string]any, error) {
+	s.dataMu.Lock()
+	defer s.dataMu.Unlock()
+	dataDir := s.cat().DataDir
+	d, backup, err := catalog.RemoveDataset(dataDir, name)
+	if err != nil {
+		return nil, err
+	}
+	cat, err := catalog.Load(dataDir)
+	if err != nil {
+		if backup != "" {
+			_ = catalog.RestoreDatasetBackup(dataDir, d.File, backup)
+			if restored, rerr := catalog.Load(dataDir); rerr == nil {
+				s.setCatalog(restored)
+			}
+		}
+		return nil, fmt.Errorf("catalog reload failed after removal, file restored: %w", err)
+	}
+	s.setCatalog(cat)
+	if s.datasetsInDB() {
+		_ = s.Meta.Store.DeleteDataset(context.Background(), d.Name)
+	}
+	return map[string]any{
+		"removed": true, "dataset": d.Name, "file": d.File,
+		"backup": backup,
+		"loaded": cat.Summary(),
+		"status": "catalog hot-swapped; restore by re-uploading via put_dataset or copying the backup back",
+	}, nil
+}
+
+func (s *Server) reloadCatalog() (map[string]any, error) {
+	s.dataMu.Lock()
+	defer s.dataMu.Unlock()
+	// meta mode: refresh the on-disk cache from the DB first so a reload picks
+	// up any out-of-band DB changes and the DB stays authoritative.
+	if s.datasetsInDB() {
+		if err := s.materializeDatasets(context.Background()); err != nil {
+			return nil, fmt.Errorf("reload failed materializing datasets from meta DB: %w", err)
+		}
+	}
+	cat, err := catalog.Load(s.cat().DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("reload failed, previous catalog stays active: %w", err)
+	}
+	s.setCatalog(cat)
+	errCount := 0
+	for _, i := range cat.Issues {
+		if i.Level == "error" {
+			errCount++
+		}
+	}
+	return map[string]any{
+		"reloaded": true,
+		"loaded":   cat.Summary(),
+		"errors":   errCount,
+		"warnings": len(cat.Issues) - errCount,
+		"hint":     "상세 이슈는 get_catalog_health로 확인하세요.",
+	}, nil
+}
+
+func datasetErrorCount(c *catalog.Catalog, name string) int {
+	d, ok := findRegistryFile(name)
+	if !ok {
+		return 0
+	}
+	n := 0
+	for _, i := range c.Issues {
+		if i.Source == d && i.Level == "error" {
+			n++
+		}
+	}
+	return n
+}
+
+func findRegistryFile(name string) (string, bool) {
+	for _, d := range catalog.DatasetRegistry {
+		if d.Name == strings.ToLower(strings.TrimSpace(name)) || d.File == name {
+			return d.File, true
+		}
+	}
+	return "", false
+}
+
+// auditToolCall appends every MCP tool invocation to an append-only JSONL so
+// SQL-generation steps are traceable. Failures to write never block a call.
+func (s *Server) auditToolCall(params json.RawMessage, dur time.Duration, callErr error) {
+	dir := filepath.Join(s.cat().DataDir, "audit")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	var req struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	_ = json.Unmarshal(params, &req)
+	args := string(req.Arguments)
+	if len(args) > 4000 {
+		args = args[:4000] + "...(truncated)"
+	}
+	entry := map[string]any{
+		"ts":          time.Now().Format(time.RFC3339Nano),
+		"tool":        req.Name,
+		"arguments":   json.RawMessage(nullIfEmpty(args)),
+		"duration_ms": dur.Milliseconds(),
+		"is_error":    callErr != nil,
+	}
+	if callErr != nil {
+		entry["error"] = callErr.Error()
+	}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, "audit-"+time.Now().Format("20060102")+".jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(b, '\n'))
+}
+
+func nullIfEmpty(s string) string {
+	if strings.TrimSpace(s) == "" || !json.Valid([]byte(s)) {
+		return "null"
+	}
+	return s
+}
+
+func (s *Server) recordFeedback(data map[string]any) (map[string]any, error) {
+	dir := filepath.Join(s.cat().DataDir, "feedback")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	id := time.Now().UTC().Format("20060102T150405.000000000Z")
+	data["id"] = id
+	data["recorded_at"] = time.Now().Format(time.RFC3339)
+	path := filepath.Join(dir, "feedback-"+time.Now().Format("20060102")+".jsonl")
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return nil, err
+	}
+	return map[string]any{"feedback_id": id, "path": path}, nil
+}
+
+func (s *Server) resources() []map[string]any {
+	return []map[string]any{
+		resource("guide://getting-started", "Getting started", "How to go from a question to safe DB SQL with these tools — read this first."),
+		resource("metadata://catalog/summary", "Catalog summary", "Counts, schemas, sample totals, and load time."),
+		resource("metadata://catalog/tables", "Table list", "Compact list of compiled tables."),
+		resource("metadata://catalog/relations", "Join relations", "Compiled join graph relations."),
+		resource("metadata://catalog/policies", "NL2SQL policy hints", "Read-only, row-limit, and SQL safety rules."),
+		resource("metadata://catalog/prompts", "Stored SQL prompts", "Active prompt templates from the dataset prompts.json."),
+		resource("metadata://catalog/examples", "Golden SQL examples", "First 100 examples from sql_datasets.json."),
+	}
+}
+
+func (s *Server) resourceTemplates() []map[string]any {
+	return []map[string]any{
+		{
+			"uriTemplate": "metadata://catalog/table/{schema}.{table}",
+			"name":        "Table detail",
+			"description": "Full compiled metadata for one table.",
+			"mimeType":    "application/json",
+		},
+	}
+}
+
+func (s *Server) readResource(params json.RawMessage) (map[string]any, error) {
+	var req struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, err
+	}
+	if req.URI == "guide://getting-started" {
+		return map[string]any{
+			"contents": []map[string]any{{
+				"uri":      req.URI,
+				"mimeType": "text/markdown",
+				"text":     gettingStartedGuide,
+			}},
+		}, nil
+	}
+	var data any
+	switch req.URI {
+	case "metadata://catalog/summary":
+		data = s.cat().Summary()
+	case "metadata://catalog/tables":
+		data = s.tableList()
+	case "metadata://catalog/relations":
+		data = s.cat().Relations
+	case "metadata://catalog/policies":
+		data = map[string]any{
+			"read_only":        true,
+			"default_limit":    catalog.DefaultLimit,
+			"blocked_keywords": []string{"INSERT", "UPDATE", "DELETE", "MERGE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE", "EXECUTE"},
+			"validation":       "Use validate_sql before run_sql_safely or any external execution.",
+		}
+	case "metadata://catalog/prompts":
+		data = s.promptListResource()
+	case "metadata://catalog/examples":
+		n := len(s.cat().Samples)
+		if n > 100 {
+			n = 100
+		}
+		data = s.cat().Samples[:n]
+	default:
+		const prefix = "metadata://catalog/table/"
+		if strings.HasPrefix(req.URI, prefix) {
+			name := strings.TrimPrefix(req.URI, prefix)
+			t, ok := s.cat().ResolveTable(name)
+			if !ok {
+				return nil, fmt.Errorf("table not found: %s", name)
+			}
+			data = t
+		} else {
+			return nil, fmt.Errorf("unknown resource: %s", req.URI)
+		}
+	}
+	b, _ := json.MarshalIndent(data, "", "  ")
+	return map[string]any{
+		"contents": []map[string]any{{
+			"uri":      req.URI,
+			"mimeType": "application/json",
+			"text":     string(b),
+		}},
+	}, nil
+}
+
+func (s *Server) tableList() []map[string]any {
+	out := make([]map[string]any, 0, len(s.cat().Tables))
+	for _, t := range s.cat().Tables {
+		out = append(out, map[string]any{
+			"table":        t.FQN,
+			"schema":       t.Schema,
+			"name":         t.Name,
+			"logical_name": t.LogicalName,
+			"description":  t.Description,
+			"columns":      len(t.Columns),
+			"primary_keys": t.PrimaryKeys,
+			"foreign_keys": t.ForeignKeys,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]["table"]) < fmt.Sprint(out[j]["table"]) })
+	return out
+}
+
+func (s *Server) prompts() []map[string]any {
+	out := []map[string]any{
+		{
+			"name":        "text2sql_workflow",
+			"description": "Workflow prompt that instructs the client to retrieve schema, joins, examples, validate, then produce SQL.",
+			"arguments": []map[string]any{
+				{"name": "question", "description": "User question", "required": true},
+			},
+		},
+		{
+			"name":        "db_sql_generation",
+			"description": "DB SQL generation prompt with optional schema context, join context, and few-shot examples.",
+			"arguments": []map[string]any{
+				{"name": "question", "required": true},
+				{"name": "schema_context", "required": false},
+				{"name": "join_context", "required": false},
+				{"name": "examples", "required": false},
+			},
+		},
+	}
+	for _, p := range s.cat().Prompts {
+		if p.Name == "" || (!p.IsActive && strings.EqualFold(p.Category, "SQL")) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"name":        promptName(p.Name),
+			"description": firstNonEmpty(p.Description, p.Name),
+			"arguments":   []map[string]any{},
+		})
+	}
+	return out
+}
+
+func (s *Server) getPrompt(params json.RawMessage) (map[string]any, error) {
+	var req struct {
+		Name      string            `json:"name"`
+		Arguments map[string]string `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, err
+	}
+	switch req.Name {
+	case "text2sql_workflow":
+		q := req.Arguments["question"]
+		return promptResult("Metadata-compiled NL2SQL workflow", "Use this workflow for question: "+q+"\n\n1. Call prepare_sql_context(question) — it runs analyze → search → metric definitions → schema context → join paths → SQL skeleton in one call and returns a single bundle. (Fall back to the individual tools — analyze_question, search_schema, search_examples, find_filter_columns, resolve_time, get_metric_definition, get_schema_context, get_join_paths, build_sql_skeleton — only to refine one part.)\n1b. If the response has status=needs_clarification, DO NOT generate SQL. Relay each clarifications[].question to the user verbatim; when options exist, present them and mark the recommended one. Then re-call prepare_sql_context(question, clarifications={id: answer-or-option-key}). Items under advisory carry safe defaults — proceed, but list them as assumptions in the final answer. If a metric's source=inferred, confirm the formula with the user.\n2. Fill only the skeleton's /* SLOT */ comments to complete one DB SELECT, using solely the bundle's tables, columns, dictionary metric expressions, and join conditions. Never expose pii columns. Always bound rows.\n3. Call validate_sql with metrics=metric_names and expected_outputs=expected_output_columns from the bundle; apply fix_hints and retry at most twice. Never execute invalid SQL. For hard questions, generate 2-3 candidates and pick rank_candidates best_sql.\n4. Call explain_sql; if risk is high, regenerate with period/limit constraints instead of executing.\n5. To execute, call run_sql_safely(sql, profile) — read-only; discover profile ids with list_db_profiles. It refuses with status=clarification_required while blocking clarifications remain unanswered in this session.\n6. Return the final answer as JSON: {sql, used_tables, used_columns, applied_metrics, applied_join_paths, applied_filters, assumptions, cautions, validation_result, executable}.\n7. Call record_feedback with the outcome."), nil
+	case "db_sql_generation":
+		text := "Generate one DB SQL SELECT for the user question.\n\nQuestion:\n" + req.Arguments["question"] + "\n\nSchema context:\n" + req.Arguments["schema_context"] + "\n\nJoin context:\n" + req.Arguments["join_context"] + "\n\nFew-shot examples:\n" + req.Arguments["examples"] + "\n\nRules:\n- Use schema-qualified table names.\n- Do not invent columns.\n- Apply each table's operator-configured policy filters (see policy_hints) only when the corresponding columns exist.\n- Return SQL plus a brief Korean explanation."
+		return promptResult("DB SQL generation", text), nil
+	default:
+		for _, p := range s.cat().Prompts {
+			if promptName(p.Name) == req.Name {
+				return promptResult(firstNonEmpty(p.Description, p.Name), replacePromptArgs(p.Content, req.Arguments)), nil
+			}
+		}
+		return nil, fmt.Errorf("prompt not found: %s", req.Name)
+	}
+}
+
+func (s *Server) promptListResource() []map[string]any {
+	out := []map[string]any{}
+	for _, p := range s.cat().Prompts {
+		out = append(out, map[string]any{
+			"name":        promptName(p.Name),
+			"source_name": p.Name,
+			"role":        p.Role,
+			"category":    p.Category,
+			"description": p.Description,
+			"is_active":   p.IsActive,
+		})
+	}
+	return out
+}
+
+func promptResult(description, text string) map[string]any {
+	return map[string]any{
+		"description": description,
+		"messages": []map[string]any{{
+			"role": "user",
+			"content": map[string]any{
+				"type": "text",
+				"text": text,
+			},
+		}},
+	}
+}
+
+func resultResponse(id *json.RawMessage, result any) rpcResponse {
+	return rpcResponse{JSONRPC: "2.0", ID: rawID(id), Result: result}
+}
+
+func errorResponse(id *json.RawMessage, code int, message string, data any) rpcResponse {
+	return rpcResponse{JSONRPC: "2.0", ID: rawID(id), Error: &rpcError{Code: code, Message: message, Data: data}}
+}
+
+func rawID(id *json.RawMessage) json.RawMessage {
+	if id == nil {
+		return json.RawMessage("null")
+	}
+	return *id
+}
+
+func toolResult(data any) map[string]any {
+	b, _ := json.MarshalIndent(data, "", "  ")
+	return map[string]any{
+		"content":           []map[string]any{{"type": "text", "text": string(b)}},
+		"structuredContent": data,
+		"isError":           false,
+	}
+}
+
+func toolError(message string) map[string]any {
+	return map[string]any{
+		"content": []map[string]any{{"type": "text", "text": message}},
+		"isError": true,
+	}
+}
+
+func tool(name, description string, inputSchema map[string]any) map[string]any {
+	return map[string]any{"name": name, "description": description, "inputSchema": inputSchema}
+}
+
+const gettingStartedGuide = `# JASQL — Getting started
+
+JASQL turns a Korean/English question into **safe, read-only DB SQL**,
+grounded in compiled catalog metadata. You never have to guess table or column
+names — the tools hand you vetted parts.
+
+## The fast path (recommended)
+
+1. **prepare_sql_context(question)** — one call runs the whole front half of the
+   pipeline (analyze → search → metric definitions → schema context → join paths
+   → SQL skeleton) and returns a single bundle:
+   - ` + "`analysis`" + ` — intent, dimensions, filters, expected_output_columns, ambiguities
+   - ` + "`selected_tables`" + ` + ` + "`search_candidates`" + ` — which tables and why
+   - ` + "`metrics`" + ` — dictionary metric expressions (use verbatim)
+   - ` + "`schema_context`" + ` — the columns you may reference
+   - ` + "`join_paths`" + ` — the only ON conditions you may use
+   - ` + "`skeleton.skeleton_sql`" + ` — a draft SQL frame with ` + "`/* SLOT */`" + ` markers
+   - ` + "`metric_names`" + `, ` + "`expected_output_columns`" + ` — pass these straight to validate_sql
+1b. **If ` + "`status`" + ` is ` + "`needs_clarification`" + `**, the skeleton is withheld: the
+   server judged the question ambiguous (undefined metric, near-tie table or
+   filter-column choice, too vague). DO NOT generate SQL — relay each
+   ` + "`clarifications[].question`" + ` to the user verbatim (present options, mark the
+   recommended one), then re-call
+   ` + "`prepare_sql_context(question, clarifications={id: answer-or-option-key})`" + `.
+   Items under ` + "`advisory`" + ` carry safe defaults — proceed, but list them as
+   assumptions in your final answer. run_sql_safely refuses to execute while
+   blocking clarifications remain unanswered in the session.
+2. **Fill only the ` + "`/* SLOT */`" + ` markers** to complete one DB SELECT.
+   Use only the bundle's tables, columns, metric expressions, and joins. Never
+   output PII columns; always bound rows.
+3. **validate_sql(sql, metrics=metric_names, expected_outputs=expected_output_columns)** —
+   apply ` + "`fix_hints`" + ` and retry at most twice. Invalid SQL is never executed.
+4. **explain_sql(sql, profile?)** — if risk=high, add period/limit constraints
+   and regenerate instead of executing.
+5. **run_sql_safely(sql, profile)** — execute read-only. Discover profile ids
+   with **list_db_profiles**.
+6. Return your answer as JSON: {sql, used_tables, used_columns, applied_metrics,
+   applied_join_paths, applied_filters, assumptions, cautions, validation_result,
+   executable}, then **record_feedback**.
+
+## When to drop to individual tools
+
+Only to refine one part: analyze_question, search_schema, find_filter_columns,
+resolve_time, get_metric_definition, get_schema_context, get_join_paths,
+build_sql_skeleton, rank_candidates.
+
+## Rules that never bend
+
+- Read-only only (SELECT/WITH). DML/DDL/PLSQL are rejected by validate_sql and
+  by the connector.
+- Take JOIN conditions only from join_paths / the skeleton — never invent them.
+- Use dictionary metric expressions verbatim; if a metric's source=inferred,
+  confirm the formula with the user.
+- If analysis.ambiguities has entries with no clear default, ask before generating.
+`
+
+func resource(uri, name, description string) map[string]any {
+	return map[string]any{"uri": uri, "name": name, "description": description, "mimeType": "application/json"}
+}
+
+func objectSchema(props map[string]any, required []string) map[string]any {
+	schema := map[string]any{"type": "object", "properties": props, "additionalProperties": false}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+func str(description string) map[string]any {
+	return map[string]any{"type": "string", "description": description}
+}
+
+func integer(description string) map[string]any {
+	return map[string]any{"type": "integer", "description": description, "minimum": 0}
+}
+
+func boolSchema(description string) map[string]any {
+	return map[string]any{"type": "boolean", "description": description}
+}
+
+func arrayOf(itemType, description string) map[string]any {
+	return map[string]any{"type": "array", "description": description, "items": map[string]any{"type": itemType}}
+}
+
+func decodeArgs(raw json.RawMessage, dst any) error {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	return json.Unmarshal(raw, dst)
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func (s *Server) writeSSEResponse(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		sessionID = "stateless"
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "close")
+	s.writeSSEEvent(w, sessionID, resp)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *Server) writeSSEEvent(w http.ResponseWriter, sessionID string, data any) {
+	id := s.nextEventID(sessionID)
+	b, _ := json.Marshal(data)
+	_, _ = fmt.Fprintf(w, "id: %s\n", id)
+	_, _ = fmt.Fprint(w, "event: message\n")
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+}
+
+func (s *Server) nextEventID(sessionID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events[sessionID]++
+	return fmt.Sprintf("%s-%d", sessionID, s.events[sessionID])
+}
+
+// trackPendingClarifications records/clears blocking re-questions for the MCP
+// session that produced this prepare_sql_context bundle. No session id (stdio,
+// stateless clients) → no tracking; the gate is a best-effort second line of
+// defense, not the primary mechanism (the withheld skeleton is).
+func (s *Server) trackPendingClarifications(ctx context.Context, bundle map[string]any) {
+	sid := sessionFrom(ctx)
+	if sid == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if status, _ := bundle["status"].(string); status == "needs_clarification" {
+		ids := []string{}
+		if cls, ok := bundle["clarifications"].([]catalog.Clarification); ok {
+			for _, cl := range cls {
+				ids = append(ids, cl.ID)
+			}
+		}
+		if len(s.pendingClar) > 1000 { // runaway backstop for never-DELETEd sessions
+			s.pendingClar = map[string][]string{}
+		}
+		s.pendingClar[sid] = ids
+		return
+	}
+	delete(s.pendingClar, sid)
+}
+
+// pendingClarifications returns the unanswered blocking clarification ids for
+// the calling MCP session, if any.
+func (s *Server) pendingClarifications(ctx context.Context) []string {
+	sid := sessionFrom(ctx)
+	if sid == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pendingClar[sid]
+}
+
+func (s *Server) newSession() string {
+	var b [24]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	id := base64.RawURLEncoding.EncodeToString(b[:])
+	s.mu.Lock()
+	s.sessions[id] = time.Now()
+	s.mu.Unlock()
+	return id
+}
+
+// touchSession refreshes a known session's last-seen time; missing or
+// unknown session IDs are ignored on purpose (lenient session policy).
+func (s *Server) touchSession(r *http.Request) {
+	_, _ = s.sessionFromRequest(r)
+}
+
+func (s *Server) sessionFromRequest(r *http.Request) (string, bool) {
+	id := r.Header.Get("Mcp-Session-Id")
+	if id == "" {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sessions[id]; !ok {
+		return "", false
+	}
+	s.sessions[id] = time.Now()
+	return id, true
+}
+
+func (s *Server) validateOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		host = u.Hostname()
+	}
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	for _, allowed := range s.Options.AllowedOrigins {
+		if strings.EqualFold(origin, strings.TrimSpace(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) writeCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" || !s.validateOrigin(r) {
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Vary", "Origin")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID")
+}
+
+func validateProtocolHeader(r *http.Request) error {
+	v := r.Header.Get("MCP-Protocol-Version")
+	if v == "" {
+		return nil
+	}
+	switch v {
+	case ProtocolVersion, "2025-03-26":
+		return nil
+	default:
+		return fmt.Errorf("unsupported MCP-Protocol-Version: %s", v)
+	}
+}
+
+func wantsSSE(r *http.Request) bool {
+	if strings.EqualFold(r.URL.Query().Get("stream"), "1") || strings.EqualFold(r.URL.Query().Get("stream"), "true") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(r.Header.Get("Prefer")), "text/event-stream")
+}
+
+func accepts(r *http.Request, typ string) bool {
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	if accept == "" {
+		return false
+	}
+	for _, part := range strings.Split(accept, ",") {
+		if strings.Contains(strings.TrimSpace(part), strings.ToLower(typ)) {
+			return true
+		}
+	}
+	return false
+}
+
+func promptName(name string) string {
+	s := strings.ToLower(name)
+	s = regexp.MustCompile(`[^a-z0-9_-]+`).ReplaceAllString(s, "_")
+	s = strings.Trim(s, "_")
+	if s == "" {
+		return "prompt"
+	}
+	return "ds_" + s
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func replacePromptArgs(text string, args map[string]string) string {
+	for k, v := range args {
+		text = strings.ReplaceAll(text, "{"+k+"}", v)
+	}
+	return text
+}
+
+func Serve(addr string, c *catalog.Catalog, opts Options) error {
+	return ServeServer(addr, NewServer(c, opts))
+}
+
+// ServeServer serves a pre-configured Server (e.g. with EnableMeta applied).
+func ServeServer(addr string, srv *Server) error {
+	mux := http.NewServeMux()
+	srv.Register(mux)
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Printf("jamypg NL2SQL MCP listening on http://%s%s", addr, srv.Options.Endpoint)
+	return httpServer.ListenAndServe()
+}

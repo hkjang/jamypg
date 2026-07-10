@@ -1,0 +1,477 @@
+# JAMYPG NL2SQL MCP
+
+Go-based MCP server for metadata-grounded NL2SQL over **PostgreSQL, MySQL, and
+MariaDB**. Current source version: `v0.1.0` (converted from the Oracle-based
+jasql project).
+
+The server loads JSON metadata from a dataset directory (e.g. `data/metadb`,
+`data/sakila`), compiles it into an in-memory catalog, search index, join
+graph, prompt registry, and static SQL guardrails, then exposes them through
+MCP tools, resources, and prompts. Generated SQL can be executed read-only
+against any of the three target engines through pure-Go drivers — no CGO, no
+client libraries, no build tags.
+
+**📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
+레퍼런스(24종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
+
+## Quick Start
+
+| 목적 | 명령 |
+| --- | --- |
+| 로컬 HTTP MCP + 관리자 UI | `go run ./cmd/jamypg-mcp -transport http -data ./data/metadb -addr 127.0.0.1:9797` |
+| 로컬 stdio MCP | `go run ./cmd/jamypg-mcp -transport stdio -data ./data/metadb` |
+| 컨테이너 (모든 DB 실행 가능) | `docker build -t jamypg-mcp:v0.1.0 .` |
+| 통합 테스트 DB 3종 기동 | `docker compose -f deploy/test/docker-compose.yml up -d` |
+| 통합 테스트 (pg+mysql+mariadb) | `go test -tags integration ./test/integration -v` |
+
+HTTP 모드 기본 진입점:
+
+- MCP endpoint: `http://127.0.0.1:9797/mcp`
+- Web admin: `http://127.0.0.1:9797/admin`
+- Swagger UI: `http://127.0.0.1:9797/docs`
+- Health check: `http://127.0.0.1:9797/healthz`
+
+## Supported Target Databases
+
+| DB | 프로파일 `type` | 드라이버 | read-only 세션 강제 |
+| --- | --- | --- | --- |
+| PostgreSQL | `postgres` (기본) | `pgx/v5` (pure Go) | `default_transaction_read_only=on` |
+| MySQL 8.x | `mysql` | `go-sql-driver/mysql` (pure Go) | `transaction_read_only=1` |
+| MariaDB 10.x/11.x | `mariadb` | `go-sql-driver/mysql` (pure Go) | `tx_read_only=1` |
+
+`connect_string`은 `host:port/dbname` 축약형, `postgres://`/`mysql://` URL,
+go-sql-driver DSN을 모두 허용합니다. 생성 SQL의 방언은 데이터셋의
+`databases.json`(`dbms`) 또는 `overrides.json`(`dialect`)이 결정하며 기본은
+postgres입니다. 상세: [docs/db-connector.md](docs/db-connector.md).
+
+## NL2SQL Recommended Flow
+
+대부분의 질문은 개별 도구를 여러 번 오케스트레이션하지 말고
+`prepare_sql_context`부터 호출하세요.
+
+1. `prepare_sql_context(question)` 호출
+2. 응답이 `status: "needs_clarification"`이면 SQL을 만들지 말고
+   `clarifications`의 질문을 사용자에게 되묻습니다.
+3. 답을 받은 뒤 `prepare_sql_context(question, clarifications={...})`로 다시 호출합니다.
+4. `status: "ready"`이면 `skeleton.skeleton_sql`의 `/* SLOT */`만 채워 SQL을 완성합니다.
+5. `validate_sql` → `explain_sql` → 필요 시 `run_sql_safely` 순서로 진행합니다.
+
+이 흐름은 테이블/컬럼/지표/시간조건/조인 경로/검증 힌트를 한 번에 묶어
+LLM이 스키마를 추측하거나 필수 검증 단계를 건너뛰는 일을 줄입니다.
+
+## Transports
+
+- `stdio`: newline-delimited JSON-RPC over standard input/output. Use this for desktop MCP clients that launch a local subprocess.
+- `http`: Streamable HTTP at a single MCP endpoint. Use this for local HTTP clients, gateways, or remote service wrapping.
+
+## Build
+
+순수 Go 빌드 하나로 세 DB 모두 지원합니다 (CGO 불필요, 클라이언트 라이브러리
+불필요):
+
+Windows PowerShell:
+
+```powershell
+.\scripts\build.ps1
+```
+
+Linux/macOS shell:
+
+```sh
+sh ./scripts/build.sh
+```
+
+Artifacts:
+
+```text
+dist/jamypg-mcp-windows-amd64.exe
+dist/jamypg-mcp-linux-amd64
+dist/jamypg-mcp-linux-arm64
+```
+
+Single-platform builds:
+
+```powershell
+go build -o .\bin\jamypg-mcp.exe .\cmd\jamypg-mcp
+```
+
+```sh
+go build -o ./bin/jamypg-mcp ./cmd/jamypg-mcp
+```
+
+## Docker Image
+
+단일 `Dockerfile`이 실행 가능한 완전한 이미지를 만듭니다 (과거의
+`Dockerfile.oracle`/Instant Client 절차는 제거되었습니다):
+
+```sh
+docker build -t jamypg-mcp:v0.1.0 .
+docker run --rm -p 9797:9797 \
+  -e JAMYPG_ADMIN_TOKEN=change-me \
+  -e PG_PROD_PW=... \
+  jamypg-mcp:v0.1.0
+```
+
+DB 프로파일은 `/admin/db` 또는 DB profile REST/MCP API로 구성한 뒤
+`run_sql_safely`로 read-only 실행합니다. See
+[docs/db-connector.md](docs/db-connector.md).
+
+## Integration Test Environment (pg + mysql + mariadb)
+
+jamypg의 **메타 DB 스키마 자체를 text2sql 대상**으로 세 엔진에 적재한
+테스트 환경이 포함되어 있습니다:
+
+```sh
+docker compose -f deploy/test/docker-compose.yml up -d
+# postgres:16  → 127.0.0.1:55432 (db jamypg_meta; 메타 DB 겸 대상 DB)
+# mysql:8.4    → 127.0.0.1:53306 (database `public`)
+# mariadb:11.4 → 127.0.0.1:53307 (database `public`)
+
+go test -tags integration ./test/integration -v   # ping/guard/limit/explain/
+                                                   # 오류코드/text2sql 골든셋 8종 × 3개 DB
+
+# 서버를 이 데이터셋으로 직접 띄워보기
+go run ./cmd/jamypg-mcp -data data/metadb -addr 127.0.0.1:9797
+# (선택) 메타 DB 모드: -meta-db 'postgres://postgres:metapw@127.0.0.1:55432/jamypg_meta'
+```
+
+카탈로그 데이터셋은 `data/metadb/`(물리/논리 모델, 관계, 용어집, 지표/코드
+사전, 컬럼 통계, 예제 SQL, 골든셋, 프로파일 3종)이며
+`python3 deploy/test/gen_testenv.py`로 재생성합니다.
+
+### 유명 오픈소스 스키마 데이터셋 (sakila / northwind / wordpress)
+
+같은 컨테이너에 유명 오픈소스 서비스 스키마 3종이 시드되어 있고, 각각 독립
+데이터셋으로 text2sql을 검증합니다 (`python3 deploy/test/gen_oss_testenv.py`로
+재생성):
+
+| 데이터셋 | 스키마 | 유래 | 골든셋 |
+| --- | --- | --- | --- |
+| `data/sakila` | sakila (9 tables: film/actor/customer/rental/payment...) | MySQL 공식 샘플 DB (DVD 렌탈) | 6 (정답 검증 포함) |
+| `data/northwind` | northwind (8 tables: products/orders/customers...) | 고전 주문관리 샘플 | 6 (정답 검증 포함) |
+| `data/wordpress` | wordpress (8 tables: wp_posts/wp_comments/wp_terms...) | WordPress CMS 핵심 테이블 | 5 (정답 검증 포함) |
+
+세 스키마 모두 PostgreSQL(스키마)·MySQL/MariaDB(동명 데이터베이스)에 동일하게
+적재되어 `sakila.film` 같은 스키마 한정 SQL이 세 엔진에서 그대로 실행되고,
+골든셋의 기대 정답(예: 카테고리별 영화 수 1위)이 세 엔진에서 일치하는지까지
+통합 테스트가 검증합니다:
+
+```sh
+go run ./cmd/jamypg-mcp -data data/sakila -addr 127.0.0.1:9797   # 프로파일: pg-sakila / mysql-sakila / mariadb-sakila
+```
+
+## Run With stdio
+
+Windows:
+
+```powershell
+.\dist\jamypg-mcp-windows-amd64.exe -transport stdio -data .\data\metadb
+```
+
+Linux:
+
+```sh
+chmod +x ./dist/jamypg-mcp-linux-amd64
+./dist/jamypg-mcp-linux-amd64 -transport stdio -data ./data/metadb
+```
+
+Example MCP client config for Windows:
+
+```json
+{
+  "mcpServers": {
+    "jamypg": {
+      "command": "C:\\Users\\USER\\projects\\jamypg\\dist\\jamypg-mcp-windows-amd64.exe",
+      "args": ["-transport", "stdio", "-data", "C:\\Users\\USER\\projects\\jamypg\\data\\metadb"]
+    }
+  }
+}
+```
+
+Example MCP client config for Linux:
+
+```json
+{
+  "mcpServers": {
+    "jamypg": {
+      "command": "/opt/jamypg/dist/jamypg-mcp-linux-amd64",
+      "args": ["-transport", "stdio", "-data", "/opt/jamypg/data/metadb"]
+    }
+  }
+}
+```
+
+stdio smoke test:
+
+```powershell
+$msg = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.1"}}}'
+$msg | .\dist\jamypg-mcp-windows-amd64.exe -transport stdio -data .\data\metadb
+```
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.1"}}}' \
+  | ./dist/jamypg-mcp-linux-amd64 -transport stdio -data ./data/metadb
+```
+
+## Run With Streamable HTTP
+
+```powershell
+go run ./cmd/jamypg-mcp -transport http -data .\data\metadb -addr 127.0.0.1:9797
+```
+
+MCP endpoint:
+
+```text
+http://127.0.0.1:9797/mcp
+```
+
+Health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:9797/healthz
+```
+
+## MCP Transport
+
+This implements the MCP Streamable HTTP transport:
+
+- `POST /mcp` accepts one JSON-RPC MCP message.
+- `GET /mcp` opens a Server-Sent Events stream for server-to-client messages.
+- `DELETE /mcp` closes a stateful session.
+- `Mcp-Session-Id` is issued after `initialize` but never required: clients
+  that do not echo the header (qwen-code, opencode, ...) are served normally
+  (lenient session policy).
+- `MCP-Protocol-Version: 2025-06-18` is accepted on subsequent requests.
+- Origin validation allows empty origins, `localhost`, `127.0.0.1`, and `::1`.
+
+For stateless local testing:
+
+```powershell
+go run ./cmd/jamypg-mcp -transport http -data .\data\metadb -stateless
+```
+
+To return POST responses as SSE:
+
+```powershell
+go run ./cmd/jamypg-mcp -transport http -data .\data\metadb -sse-post
+```
+
+## Curl Smoke Test
+
+Initialize:
+
+```powershell
+$init = @{
+  jsonrpc = "2.0"
+  id = 1
+  method = "initialize"
+  params = @{
+    protocolVersion = "2025-06-18"
+    capabilities = @{}
+    clientInfo = @{ name = "curl"; version = "0.0.1" }
+  }
+} | ConvertTo-Json -Depth 10
+
+$res = Invoke-WebRequest `
+  -Uri http://127.0.0.1:9797/mcp `
+  -Method POST `
+  -ContentType "application/json" `
+  -Headers @{ Accept = "application/json, text/event-stream" } `
+  -Body $init
+
+$sid = $res.Headers["Mcp-Session-Id"]
+$res.Content
+```
+
+List tools:
+
+```powershell
+$body = @{
+  jsonrpc = "2.0"
+  id = 2
+  method = "tools/list"
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod `
+  -Uri http://127.0.0.1:9797/mcp `
+  -Method POST `
+  -ContentType "application/json" `
+  -Headers @{
+    Accept = "application/json, text/event-stream"
+    "Mcp-Session-Id" = $sid
+    "MCP-Protocol-Version" = "2025-06-18"
+  } `
+  -Body $body
+```
+
+Search schema:
+
+```powershell
+$body = @{
+  jsonrpc = "2.0"
+  id = 3
+  method = "tools/call"
+  params = @{
+    name = "search_schema"
+    arguments = @{
+      question = "최근 6개월간 신용카드 이용 내역이 있는 고객 수"
+      top_k = 5
+      include_columns = $true
+    }
+  }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod `
+  -Uri http://127.0.0.1:9797/mcp `
+  -Method POST `
+  -ContentType "application/json" `
+  -Headers @{
+    Accept = "application/json, text/event-stream"
+    "Mcp-Session-Id" = $sid
+    "MCP-Protocol-Version" = "2025-06-18"
+  } `
+  -Body $body
+```
+
+## Tools
+
+- `analyze_question` — 질문 분해: intent, 지표(사전 매칭), 차원, 필터, 시간범위, 정렬/limit, 모호성, 적용 기본값
+- `search_schema` — 다중 신호 스코어링(물리/논리명, 설명, 동의어, 도메인, 지표사전, 샘플값, 과거 성공 SQL, 조인 연결성) + 매칭 사유 + 제외 후보/사유
+- `get_schema_context` — 압축 컨텍스트: 선택 테이블/컬럼 Top-K, 필수 조인 조건, 지표 계산식, 시간 조건, PII 표시, 제외 컬럼 로그
+- `get_join_paths` — 조인 그래프 기반 경로(모든 쌍), confidence/preferred/caution, 저신뢰·경로없음 가이던스, 금지 조인 차단
+- `get_metric_definition` — 지표 사전(`metrics.json`) 우선 조회; 없으면 추정 후보를 명확히 분리해 반환
+- `get_column_stats` — 메타 + 프로파일 통계(null 비율, distinct, min/max, top values, 포맷 패턴)
+- `find_filter_columns` — 질문 속 리터럴 값(서울, 정상, 개인사업자...)을 코드사전/top values로 필터 컬럼에 매핑
+- `resolve_time` — 시간 표현(오늘/지난달/최근 3개월/2025년 6월/상반기/전월 대비...)을 semantic_type별 SQL 조건으로 변환
+- `search_examples` — golden SQL 예제 검색 (질문의 intent 시그니처와 예제 `target_intent`의 구조 유사도로 랭킹 — 같은 SQL 형태의 예제 우선)
+- `build_sql_skeleton` — 복잡/다중 테이블 질문용: 검증된 부품(카탈로그 조인 조건+alias, 지표사전 expression, semantic_type별 시간 조건, 정책 필터)을 조립한 SQL 골격 반환. LLM은 `/* SLOT */` 주석만 채움
+- `rank_candidates` — 후보 SQL 여러 개를 서버측 객관 신호(검증 오류/경고, 리스크, 결과 스키마 커버리지, 지표 일치)로 정렬해 최선안 반환 — self-consistency를 LLM 자기평가 대신 객관 점수로 구현
+- `suggest_joins` — 단일 컬럼 PK 마스터를 참조하는 미연결 테이블을 발굴해 조인 엣지 후보 제안(FK/인덱스/타입/동시출현 근거 + overrides.json 스니펫). **운영자 검토용 — 자동 적용되지 않음**
+- `validate_sql` — 정적 검증: 미존재 테이블/컬럼, 조인 그래프, 카티션, GROUP BY, 방언(postgres/mysql/mariadb — Oracle 전용 문법 차단, 교차 방언 함수 경고), 날짜 타입, PII, 지표식 일치, **코드사전 값 검증**(존재하지 않는 코드 리터럴 차단), **결과 스키마 검증**(`expected_outputs`로 요구 차원/지표 누락 감지), CTE/인라인뷰 스코프 인식, 구조화된 `fix_hints`(최대 2회 자동수정 루프용)
+- `explain_sql` — 리스크 추정: 정적 분석 + `profile` 지정 시 **실측 EXPLAIN**(postgres `EXPLAIN (FORMAT JSON)`, mysql/mariadb `EXPLAIN FORMAT=JSON`) — full scan/카티션/대량 정렬/고비용 탐지, 개선 제안
+- `run_sql_safely` — 검증 후 **실제 DB 실행** (`profile` 지정 시; postgres/mysql/mariadb, read-only 세션, 타임아웃·행 제한·truncated·감사 로그). 프로파일 미지정 시 dry-run 가드. 검증 실패 SQL은 실행하지 않음
+- `record_feedback` — 질문/분석/후보/SQL/검증오류/채택여부/실행시간 저장; 성공 SQL은 재기동 시 few-shot·검색 부스트로 재사용
+- `list_datasets` / `get_dataset` — 서버가 참조하는 모든 JSON 데이터셋의 라이브 레지스트리: 용도, 스키마, 사용 도구, 필수/편집가능 여부, 현재 상태(존재·크기·로드 건수·로드 이슈)와 내용 샘플
+- `put_dataset` — 데이터셋 교체: JSON 형태 검증 → 기존 파일 백업(`backups/`) → 쓰기 → 카탈로그 재컴파일 → **핫스왑**(재기동 불필요). 컴파일 실패나 신규 오류 발생 시 자동 롤백(`force`로 강제 적용 가능)
+- `remove_dataset` — 선택 데이터셋 제거(백업 후) + 핫스왑. 필수(`physical_models`, `logical_models`)·시스템 관리(`feedback`, `audit`) 대상은 거부
+- `reload_catalog` — 디스크 파일을 직접 수정한 경우(볼륨 마운트 등) 재컴파일 + 핫스왑
+- `get_catalog_health` — 메타 컴파일 검증 결과(오류/경고), 커버리지 갭, PII 목록
+- `run_evaluation` — golden query set 평가(테이블/컬럼/지표/조인/SQL 유효성 정확도, 평균 응답시간)
+- `learn_from_feedback` — 반복 실패 패턴을 learned rule로 승격: 동일 검증오류 반복(예방 경고), 테이블 오선택 교정(검색 패널티), 컬럼 교정(validate_sql 경고). `learned_rules.json`에 영속화되어 운영자가 검토/수정 가능
+
+`run_sql_safely` validates SQL and, when a DB profile is supplied, executes it
+read-only against the target database (postgres/mysql/mariadb) with query
+timeout, row limit, and audit logging — drivers are always compiled in.
+Without a profile it stays a dry-run guard returning bounded SQL. See
+`docs/db-connector.md`. Start most questions with `prepare_sql_context`,
+which runs the whole analyze→skeleton pipeline in one call.
+
+## Web Admin Console & REST API
+
+HTTP 모드로 기동하면 브라우저 기반 관리 화면과 Swagger 문서가 함께 제공됩니다.
+
+| 경로 | 내용 |
+| --- | --- |
+| `/admin` | **데이터셋 관리 콘솔** — 18개 데이터셋의 용도·스키마·상태 확인, 내용 편집·적용(백업+검증+핫스왑), 제거, 백업/복원, 카탈로그 리로드. 단계별 사용 가이드가 화면에 내장 |
+| `/admin/editor` | **테이블 편집기** — 데이터셋을 표(그리드)로 렌더링해 JSON 없이 편집: 셀 클릭 인라인 수정(타입 자동 보존), 행 추가/복제/삭제, **컬럼 추가/이름변경/삭제**, 검색·페이지네이션. 저장 시 동일한 백업·검증·핫스왑·롤백 적용 |
+| `/admin/db` | **DB 연결 관리·쿼리 실행** — postgres/mysql/mariadb 프로파일 추가/수정/삭제/접속 테스트, Read-Only 쿼리 콘솔(검증→미리보기→실행→취소), 실행 이력·메트릭 ([docs/db-connector.md](docs/db-connector.md)) |
+| `/auth/login` · `/admin/users` · `/admin/keys` | **인증·사용자·MCP 키** (메타 DB 활성 시) — 로컬/Keycloak SSO 로그인, 사용자·역할 관리(admin), MCP 키 발급·회전·폐기, 프로파일별 권한(grant). 상세: [docs/auth.md](docs/auth.md) |
+| `/docs` | **Swagger UI** — REST API 문서 + Try it out (오프라인 동작, 자산 임베드) |
+| `/openapi.json` | OpenAPI 3.0 스펙 |
+| `/api/*` | REST API: `GET /api/datasets`, `GET/PUT/DELETE /api/datasets/{name}`, `GET .../content`, `GET .../backups`, `POST .../restore`, `POST /api/reload`, `GET /api/health` |
+
+변경 API 보호: `-admin-token <값>` 플래그(또는 `JAMYPG_ADMIN_TOKEN` 환경변수)를
+설정하면 PUT/DELETE/POST에 `X-Admin-Token` 헤더가 필요합니다. 미설정 시 인증
+없이 호출 가능하므로 내부망 외 노출 시 반드시 설정하세요. 모든 변경은
+`audit/*.jsonl`에 기록되고, REST와 MCP 도구(`put_dataset` 등)는 동일한
+검증·백업·롤백 코드를 공유합니다.
+
+## Authentication (optional, Postgres meta DB)
+
+`-meta-db <postgres DSN>`(또는 `JAMYPG_META_DB`)를 지정하면 전면 인증이
+활성화됩니다. 미지정 시 기존 단독 모드 그대로 동작합니다(하위 호환).
+
+```sh
+jamypg-mcp -transport http -addr 0.0.0.0:9797 \
+  -meta-db 'postgres://jamypg:pw@pg:5432/jamypg?sslmode=require' \
+  -bootstrap-admin 'admin:첫관리자비밀번호'
+```
+
+- **로그인**: 로컬 계정(bcrypt) + 세션 쿠키, 또는 Keycloak **SSO(OIDC)**
+  (`-oidc-issuer/-oidc-client-id/-oidc-client-secret/-oidc-redirect-url`)
+- **역할**: `admin`(전권) / `user`. 관리자는 사용자·데이터셋·전체 프로파일·
+  전체 키 관리
+- **MCP 키**: `/mcp` 접근용 `jsk_...` 키를 발급·회전·폐기(`/admin/keys`).
+  클라이언트는 `Authorization: Bearer jsk_...` 또는 `X-MCP-Key`로 접속
+- **DB 프로파일 권한**: 사용자별 소유 + `use`/`manage` grant + `shared`
+  공개. Postgres에 저장되어 사용자마다 접근 범위가 다름
+- 첫 기동 시 부트스트랩 관리자를 생성(비밀번호 미지정 시 로그에 1회 출력)
+
+- **서버 설정 관리**: 마스터 토큰·허용 Origin·Keycloak SSO를 `/admin/settings`
+  에서 메타 DB에 저장하고 **재기동 없이 즉시 적용**(플래그/env는 기본값)
+- **데이터셋도 메타 DB에서 관리**: 편집 가능한 카탈로그 JSON 14종의 진실
+  원본이 Postgres(`jamypg_datasets`)가 되어 `/admin`·MCP 도구 편집이 DB에
+  영속화됨(로드 시 파일로 materialize해 기존 로더 재사용)
+- **MCP `list_db_profiles`**: LLM이 사용 가능한 DB 프로파일 id를 발견
+
+메타 DB 드라이버는 순수 Go(pgx)라 CGO/외부 클라이언트가 필요 없습니다. 상세:
+[docs/auth.md](docs/auth.md).
+
+## Operator-Managed Data Files (dataset dir)
+
+| 파일 | 용도 |
+| --- | --- |
+| `glossary.json` | 업무 용어/동의어 사전 (검색·질문분해·SQL생성·검증 공용) |
+| `metrics.json` | 지표 사전: expression, 집계, grain, 필수 필터, 예시 SQL |
+| `overrides.json` | 운영자 보정: 설명/도메인/grain, 컬럼 동의어·샘플값, PII 지정, 금지/권장 조인, 기본 필터, dialect(postgres/mysql/mariadb) |
+| `databases.json` | 대상 DB 정보 — `dbms`(POSTGRES/MYSQL/MARIADB)가 생성 SQL 방언 결정 |
+| `db_profiles.json` | 실행용 DB 접속 프로파일 (type/connect_string/password_ref/pool/policy) |
+| `column_stats.json` | 컬럼 프로파일 통계 (선택; row count, null 비율, top values, 최신성) |
+| `patterns.json` | 다단계 SQL 패턴 사전 (2단 집계, 그룹별 top-N, 전월/전년 대비, 비율, 분포) — 미존재 시 내장 기본값 사용 (방언에 맞게 자동 치환) |
+| `golden_queries.json` | 평가용 golden query set — 수작업 케이스 + `jamypg-goldgen` 자동 선별 (CI에서 `go test ./...`로 자동 실행) |
+| `learned_rules.json` | `learn_from_feedback`가 승격한 학습 룰 (운영자 검토/수정/삭제 가능) |
+| `feedback/*.jsonl` | record_feedback 저장소 (성공 SQL 학습·룰 승격에 재사용) |
+| `audit/*.jsonl` | 모든 tool call 감사 로그 (자동 기록, git 제외) |
+
+## Evaluation
+
+```sh
+go test ./...                            # golden set 포함 전체 테스트 (CI)
+go run ./cmd/jamypg-eval -verbose        # 평가만 실행, 케이스별 미스 출력
+go run ./cmd/jamypg-eval -data data/metadb -profile pg-meta
+                                         # 실행 기반 평가 (실제 DB에 COUNT 검증)
+go run ./cmd/jamypg-goldgen -n 80        # sql_datasets에서 golden set 재생성
+                                         # (도메인 x 난이도 층화, 카탈로그 검증 통과 케이스만,
+                                         #  기존 파일 상단 수작업 케이스는 -keep 개수만큼 보존)
+```
+
+측정 항목: table_selection_acc, column_recall_avg, metric_lookup_acc,
+join_path_acc, expected_sql_valid, avg_response_ms (+ `-profile` 시
+execution_success_rate, row_sanity_rate).
+data/metadb 8케이스(3개 DB 실측): table 1.0 / join 1.0 / sql 1.0 / 실행 성공률 1.0.
+OSS 데이터셋(sakila/northwind/wordpress) 17케이스: 3개 엔진에서 동일 정답 검증 통과.
+
+## Feedback Learning Loop
+
+1. 클라이언트가 `record_feedback`으로 질문/SQL/검증오류/교정본/채택여부 저장
+2. 성공·교정 SQL은 재기동 시 자동으로 few-shot 예제와 검색 부스트에 반영
+3. `learn_from_feedback` 호출(또는 주기 실행) 시 반복 패턴을 룰로 승격:
+   - `recurring_error` — 같은 검증 오류가 N회 이상 → 해당 테이블/컬럼 사용 시 예방 경고
+   - `table_correction` — 교정에서 반복적으로 교체된 테이블 → 검색 점수 패널티 + 경고
+   - `column_correction` — 반복 교체된 컬럼 → validate_sql이 대체 컬럼 힌트 제시
+   - `slow_query` / `recurring_exec_error` — 실행 감사 로그에서 반복 지연·오류(PG-*/MY-*/TIMEOUT) 승격
+4. 룰은 `learned_rules.json`으로 영속화; 서버 재기동 시 자동 적용, 운영자가 직접 편집 가능
+
+## SQL Generation Flow
+
+1. `analyze_question` → 모호성 확인 (기본값 적용 시 가정 표시), 패턴·intent 시그니처 확보
+2. `search_schema` (+`find_filter_columns`, `resolve_time`)
+3. `get_metric_definition` — 업무 지표는 사전 expression만 사용
+4. `get_schema_context` — 압축 컨텍스트만 LLM에 전달
+5. `get_join_paths` — ON 조건은 반드시 여기서 취득; 경로 없음/저신뢰 시 되묻기
+6. 복잡/다중 테이블 질문이면 `build_sql_skeleton`으로 골격 확보 후 SLOT만 채움; 단순 질문은 직접 생성 (컨텍스트 내 식별자만, PII 금지, row bound(LIMIT) 필수)
+7. `validate_sql` (`expected_outputs`, `metrics` 전달) — fix_hints 반영 최대 2회 재시도; 실패 SQL 실행 금지. 난이도 높은 질문은 후보 2~3개를 만들어 `rank_candidates`로 최선안 선택
+8. `explain_sql` — risk=high면 기간/limit 조건 추가 후 재생성 (`profile` 지정 시 실측 EXPLAIN)
+9. 구조화 JSON 응답 (sql, 사용 테이블/컬럼, 지표, 조인, 필터, 가정, 주의, 검증결과, 실행가능여부)
+10. `record_feedback`
