@@ -35,6 +35,8 @@ func main() {
 		syncSource     string
 		syncInterval   time.Duration
 		digestWebhook  string
+		omURL          string
+		omToken        string
 	)
 	flag.StringVar(&dataDir, "data", filepath.Join("data", "metadb"), "Path to metadata dataset directory")
 	flag.StringVar(&transport, "transport", "http", "MCP transport: http or stdio")
@@ -55,6 +57,8 @@ func main() {
 	flag.StringVar(&syncSource, "sync-source", os.Getenv("JAMYPG_SYNC_SOURCE"), "DB profile id to auto-sync metadata from on a schedule (with -sync-interval)")
 	flag.DurationVar(&syncInterval, "sync-interval", 0, "Interval for the scheduler (e.g. 24h); 0 disables. Drives -sync-source and/or -digest-webhook")
 	flag.StringVar(&digestWebhook, "digest-webhook", os.Getenv("JAMYPG_DIGEST_WEBHOOK"), "URL to POST the metadata digest JSON to on each scheduler tick (with -sync-interval)")
+	flag.StringVar(&omURL, "openmetadata-url", os.Getenv("JAMYPG_OPENMETADATA_URL"), "OpenMetadata base URL (e.g. http://host:8585) to import/export metadata")
+	flag.StringVar(&omToken, "openmetadata-token", os.Getenv("JAMYPG_OPENMETADATA_TOKEN"), "OpenMetadata bot JWT token (default: JAMYPG_OPENMETADATA_TOKEN env)")
 	flag.Parse()
 
 	if err := validateHTTPExposure(transport, addr, metaDSN, adminToken, publicMCP); err != nil {
@@ -115,12 +119,14 @@ func main() {
 		log.Fatalf("unsupported transport %q: use http or stdio", transport)
 	}
 	opts := mcp.Options{
-		Endpoint:         endpoint,
-		AllowedOrigins:   splitCSV(allowOrigins),
-		Stateful:         !stateless,
-		SSEPost:          ssePost,
-		AdminToken:       adminToken,
-		FeedbackTenantID: feedbackTenant,
+		Endpoint:          endpoint,
+		AllowedOrigins:    splitCSV(allowOrigins),
+		Stateful:          !stateless,
+		SSEPost:           ssePost,
+		AdminToken:        adminToken,
+		FeedbackTenantID:  feedbackTenant,
+		OpenMetadataURL:   omURL,
+		OpenMetadataToken: omToken,
 	}
 	srv := mcp.NewServer(cat, opts)
 	if metaSvc != nil {

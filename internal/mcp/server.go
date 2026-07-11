@@ -38,6 +38,11 @@ type Options struct {
 	SSEPost          bool
 	AdminToken       string // when set, mutating /api/* endpoints require it
 	FeedbackTenantID string // server-owned workspace/tenant scope for feedback
+
+	// OpenMetadata integration (optional): base URL + bot JWT for importing
+	// curated metadata and exporting jamypg-owned descriptions.
+	OpenMetadataURL   string
+	OpenMetadataToken string
 }
 
 type Server struct {
@@ -496,6 +501,18 @@ func (s *Server) tools() []map[string]any {
 			"reviewer":  str("Who is making the decision (name or id)"),
 		}, []string{"decisions"})),
 		tool("get_metadata_digest", "One compact operational-health snapshot of the catalog: metadata quality score + release-gate status, the candidate review backlog (pending/approved/rejected), golden-promotion candidate count, and catalog size + load warnings, with a one-line headline. Read-only; use for a daily ops glance or to drive an alert.", objectSchema(map[string]any{}, nil)),
+		tool("openmetadata_status", "Test connectivity and auth to the configured OpenMetadata server and report its version. Use before import/export to confirm the -openmetadata-url / token are set.", objectSchema(map[string]any{}, nil)),
+		tool("import_openmetadata", "Import curated business metadata (table/column display names → logical names, descriptions, PII tags → pii/semantic_type, glossary terms) from OpenMetadata into jamypg. Proposes candidates for GAPS ONLY (never overwrites operator curation), matched to catalog tables by schema.table. apply=false (default) previews; apply=true merges into overrides.json/glossary.json with backups and reloads the catalog (admin).", objectSchema(map[string]any{
+			"scope":            str("OpenMetadata database/schema FQN to scope the import (e.g. 'service.db' or 'service.db.schema'); omit for all"),
+			"max_tables":       integer("Max tables to fetch (default 500)"),
+			"include_glossary": boolSchema("Also import glossary terms (default true)"),
+			"apply":            boolSchema("true → merge into dataset files + reload (admin); false → preview only (default)"),
+		}, nil)),
+		tool("export_to_openmetadata", "Push jamypg-owned column descriptions (explicit, or composed from logical names) BACK to OpenMetadata for columns that lack a description there. Never overwrites existing OpenMetadata descriptions. dry_run=true (default) returns the plan; dry_run=false performs JSON-Patch writes (admin).", objectSchema(map[string]any{
+			"scope":      str("OpenMetadata database/schema FQN to scope; omit for all"),
+			"max_tables": integer("Max tables to scan (default 500)"),
+			"dry_run":    boolSchema("true → plan only (default); false → write to OpenMetadata (admin)"),
+		}, nil)),
 		tool("get_approved_overrides", "Return all approved metadata candidates compiled into paste-ready fragments grouped by destination file: overrides.json columns[], metrics.json entries, relations.json entries, and code-dictionary bindings. Apply these and reload/restart to make the approved candidates live.", objectSchema(map[string]any{}, nil)),
 		tool("apply_approved_candidates", "ONE-CLICK APPLY: merge every approved-but-not-yet-applied candidate into the dataset files (overrides.json columns[], metrics.json, topology_relations.json, meta_code_dict.json) with automatic per-file backups, then hot-reload the catalog. Idempotent — applied records are stamped applied_at and skipped on re-run; merges also dedupe against file content, and existing operator-curated values are never overwritten. Approval remains the explicit human gate; this is the second explicit act that makes approved metadata live.", objectSchema(map[string]any{}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
@@ -584,6 +601,8 @@ func annotateTools(list []map[string]any) []map[string]any {
 		"decide_candidates":         {destructive: false, idempotent: false}, // persists review decisions
 		"apply_approved_candidates": {destructive: true, idempotent: true},   // merges into dataset files (backed up)
 		"promote_golden_queries":    {destructive: true, idempotent: true},   // appends to golden_queries.json (backed up)
+		"import_openmetadata":       {destructive: true, idempotent: true},   // merges external metadata (apply=true)
+		"export_to_openmetadata":    {destructive: true, idempotent: true},   // writes to OpenMetadata (dry_run=false)
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -616,6 +635,8 @@ var adminOnlyTools = map[string]bool{
 	"decide_candidates":         true,
 	"apply_approved_candidates": true,
 	"promote_golden_queries":    true,
+	"import_openmetadata":       true,
+	"export_to_openmetadata":    true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -1098,6 +1119,31 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		return s.cat().DecideCandidates(a.Decisions, reviewer, time.Now()), nil
 	case "get_metadata_digest":
 		return s.MetadataDigest(), nil
+	case "openmetadata_status":
+		return s.omStatus(ctx), nil
+	case "import_openmetadata":
+		var a struct {
+			Scope           string `json:"scope"`
+			MaxTables       int    `json:"max_tables"`
+			IncludeGlossary *bool  `json:"include_glossary"`
+			Apply           bool   `json:"apply"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		includeGlossary := a.IncludeGlossary == nil || *a.IncludeGlossary
+		return s.omImport(ctx, a.Scope, a.MaxTables, includeGlossary, a.Apply), nil
+	case "export_to_openmetadata":
+		var a struct {
+			Scope     string `json:"scope"`
+			MaxTables int    `json:"max_tables"`
+			DryRun    *bool  `json:"dry_run"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		dryRun := a.DryRun == nil || *a.DryRun
+		return s.omExport(ctx, a.Scope, a.MaxTables, dryRun), nil
 	case "get_approved_overrides":
 		return s.cat().ApprovedOverrides(), nil
 	case "apply_approved_candidates":

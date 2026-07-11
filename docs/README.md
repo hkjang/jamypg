@@ -21,6 +21,7 @@ SQL(PostgreSQL·MySQL·MariaDB)로 변환하도록 돕는 **Text2SQL MCP 서버*
 | [metadata-candidates.md](metadata-candidates.md) | 운영자, 데이터 관리자, LLM 통합 | 규칙 기반 모델 후보(Phase 6): 코드사전·지표·관계 **검토 후보** 생성, `suggest_model_candidates` |
 | [metadata-impact.md](metadata-impact.md) | 운영자, 데이터 관리자 | 계보/영향도 분석(Phase 7): 테이블/컬럼 변경 전 의존 지표·관계·조인·골든셋·용어집·하위 테이블 역추적, impact_level, `analyze_impact` |
 | [metadata-review.md](metadata-review.md) | 운영자, 데이터 관리자, LLM 통합 | 후보 승인 워크플로(Phase 9): 검토 큐·승인/반려 이력·적용 스니펫, `/admin/reviews` UI, `review_candidates`/`decide_candidates`/`get_approved_overrides` |
+| [openmetadata.md](openmetadata.md) | 운영자, 데이터 관리자 | OpenMetadata 양방향 연동: import(설명·PII·용어집→빈 필드 후보), export(설명 push), 자동화. `import_openmetadata`/`export_to_openmetadata`/`openmetadata_status` |
 | [auth.md](auth.md) | 운영자, 보안 담당 | 인증·권한·MCP 키: Postgres 메타 DB, 로컬/Keycloak SSO 로그인, 역할·프로파일 권한, MCP 키 라이프사이클 |
 | [operations.md](operations.md) | 운영자, SRE | 배포, 모니터링, 백업/복원, 피드백 학습 루프, 트러블슈팅 |
 | [evaluation.md](evaluation.md) | QA, 운영자 | 골든셋 평가 체계, 지표 정의, CI 통합, 골든셋 확장 |

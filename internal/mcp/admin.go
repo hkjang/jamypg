@@ -79,6 +79,48 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/metadata/digest", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, s.MetadataDigest())
 	})
+	mux.HandleFunc("GET /api/openmetadata/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, s.omStatus(r.Context()))
+	})
+	mux.HandleFunc("POST /api/openmetadata/import", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Scope           string `json:"scope"`
+			MaxTables       int    `json:"max_tables"`
+			IncludeGlossary *bool  `json:"include_glossary"`
+			Apply           bool   `json:"apply"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		if req.Apply && !s.requireAdmin(w, r) {
+			return
+		}
+		includeGlossary := req.IncludeGlossary == nil || *req.IncludeGlossary
+		res := s.omImport(r.Context(), req.Scope, req.MaxTables, includeGlossary, req.Apply)
+		if req.Apply {
+			s.adminAudit(r, "openmetadata.import", s.reviewerFromRequest(r), nil)
+		}
+		writeJSON(w, http.StatusOK, res)
+	})
+	mux.HandleFunc("POST /api/openmetadata/export", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Scope     string `json:"scope"`
+			MaxTables int    `json:"max_tables"`
+			DryRun    *bool  `json:"dry_run"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		dryRun := req.DryRun == nil || *req.DryRun
+		if !dryRun && !s.requireAdmin(w, r) {
+			return
+		}
+		res := s.omExport(r.Context(), req.Scope, req.MaxTables, dryRun)
+		if !dryRun {
+			s.adminAudit(r, "openmetadata.export", s.reviewerFromRequest(r), nil)
+		}
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("GET /api/audit/verify", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return
