@@ -495,6 +495,7 @@ func (s *Server) tools() []map[string]any {
 			"decisions": arrayOfObjects("Each: {id, decision: approved|rejected, notes?}"),
 			"reviewer":  str("Who is making the decision (name or id)"),
 		}, []string{"decisions"})),
+		tool("get_metadata_digest", "One compact operational-health snapshot of the catalog: metadata quality score + release-gate status, the candidate review backlog (pending/approved/rejected), golden-promotion candidate count, and catalog size + load warnings, with a one-line headline. Read-only; use for a daily ops glance or to drive an alert.", objectSchema(map[string]any{}, nil)),
 		tool("get_approved_overrides", "Return all approved metadata candidates compiled into paste-ready fragments grouped by destination file: overrides.json columns[], metrics.json entries, relations.json entries, and code-dictionary bindings. Apply these and reload/restart to make the approved candidates live.", objectSchema(map[string]any{}, nil)),
 		tool("apply_approved_candidates", "ONE-CLICK APPLY: merge every approved-but-not-yet-applied candidate into the dataset files (overrides.json columns[], metrics.json, topology_relations.json, meta_code_dict.json) with automatic per-file backups, then hot-reload the catalog. Idempotent — applied records are stamped applied_at and skipped on re-run; merges also dedupe against file content, and existing operator-curated values are never overwritten. Approval remains the explicit human gate; this is the second explicit act that makes approved metadata live.", objectSchema(map[string]any{}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
@@ -965,6 +966,19 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			ApprovePlan:    a.ApprovePlan,
 		}, a.Fresh)
 		if err != nil {
+			var cost *dbconn.PlanCostError
+			if errors.As(err, &cost) {
+				return map[string]any{
+					"status":     "blocked_cost_ceiling",
+					"validation": map[string]any{"valid": true, "warnings": len(v.Warnings)},
+					"live_plan":  cost.Plan,
+					"measure":    cost.Measure,
+					"limit":      cost.Limit,
+					"estimated":  cost.Actual,
+					"error":      err.Error(),
+					"notice":     "예상 실행 비용이 프로파일의 절대 상한을 초과했습니다. approve_plan으로 우회할 수 없습니다. 기간·LIMIT·필터로 쿼리를 좁히세요(상한 조정은 관리자 프로파일 정책 변경 필요).",
+				}, nil
+			}
 			var gate *dbconn.PlanGateError
 			if errors.As(err, &gate) {
 				return map[string]any{
@@ -1082,6 +1096,8 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			reviewer = "mcp"
 		}
 		return s.cat().DecideCandidates(a.Decisions, reviewer, time.Now()), nil
+	case "get_metadata_digest":
+		return s.MetadataDigest(), nil
 	case "get_approved_overrides":
 		return s.cat().ApprovedOverrides(), nil
 	case "apply_approved_candidates":

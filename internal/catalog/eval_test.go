@@ -235,3 +235,40 @@ func TestExecutionBasedEvaluation(t *testing.T) {
 		t.Fatal("no counter → no execution metrics")
 	}
 }
+
+func TestClassifyMisses(t *testing.T) {
+	results := []EvalCaseResult{
+		{Missing: nil}, // clean
+		{Missing: []string{"table:public.x", "column:public.x.c"}},
+		{Missing: []string{"join:a->b"}},
+		{Missing: []string{"table:public.y"}},
+	}
+	mb := classifyMisses(results)
+	if mb["clean_cases"].(int) != 1 || mb["failing_cases"].(int) != 3 {
+		t.Fatalf("clean/failing wrong: %+v", mb)
+	}
+	by := mb["by_category"].(map[string]int)
+	if by["table_miss"] != 2 || by["column_miss"] != 1 || by["join_broken"] != 1 {
+		t.Fatalf("category counts wrong: %+v", by)
+	}
+	pri := mb["priority"].([]MissCatRank)
+	if len(pri) == 0 || pri[0].Category != "table_miss" {
+		t.Fatalf("table_miss should rank first: %+v", pri)
+	}
+	if _, ok := mb["recommendation"].(string); !ok {
+		t.Fatal("recommendation missing")
+	}
+}
+
+func TestMissCategoryMapping(t *testing.T) {
+	cases := map[string]string{
+		"table:x": "table_miss", "column:x": "column_miss", "metric:x": "metric_miss",
+		"join:a->b": "join_broken", "sql_error:x": "sql_invalid", "exec:x": "exec_error",
+		"rows:5": "row_sanity", "weird": "other",
+	}
+	for in, want := range cases {
+		if got := missCategory(in); got != want {
+			t.Errorf("missCategory(%q)=%q want %q", in, got, want)
+		}
+	}
+}

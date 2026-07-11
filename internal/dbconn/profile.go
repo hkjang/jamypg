@@ -80,6 +80,14 @@ type Policy struct {
 	// PlanGate defaults ON; PlanGateRisk defaults to "high".
 	PlanGate     *bool  `json:"plan_gate,omitempty"`
 	PlanGateRisk string `json:"plan_gate_risk,omitempty"` // low | medium | high (default high)
+
+	// Absolute cost ceilings (cost guard): when > 0, a query whose EXPLAIN
+	// estimates exceed these caps is refused BEFORE execution and CANNOT be
+	// bypassed with ApprovePlan — a hard circuit breaker against runaway
+	// queries on the operational DB (distinct from the reviewable risk gate).
+	// 0 = disabled. Changing the cap requires an admin policy edit.
+	MaxPlanCost int64 `json:"max_plan_cost,omitempty"` // EXPLAIN estimated total cost
+	MaxPlanRows int64 `json:"max_plan_rows,omitempty"` // EXPLAIN estimated max cardinality
 }
 
 func (p *Profile) withDefaults() Profile {

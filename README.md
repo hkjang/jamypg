@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(47종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(48종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -376,6 +376,7 @@ Invoke-RestMethod `
 - `analyze_impact` — 테이블/컬럼 변경·폐기 전 **계보/영향도** 추적: 해당 자산에 의존하는 지표·관계·선호/금지 조인·골든셋·오버라이드·용어집·1홉 하위 테이블을 역추적하고 impact_level(지표/선호조인 의존 시 high) 산출. 카탈로그 읽기 전용 분석
 - `review_candidates` — 의미보강·모델 후보를 저장된 승인/반려 결정과 조인해 **검토 큐**로 조회(상태 pending/approved/rejected 필터). 각 항목에 안정적 id 부여. 사람 개입 게이트
 - `decide_candidates` — 후보를 id로 **승인/반려**. 검토자·시각·메모와 함께 영속 저장(`<data>/reviews/decisions.json`). 카탈로그 자동 미반영
+- `get_metadata_digest` — 카탈로그 운영 상태 **요약 스냅숏**: 품질 점수·릴리스 게이트, 검토 큐 백로그(대기/승인/반려), 골든 승격 후보 수, 카탈로그 규모·로드 경고 + 한 줄 헤드라인. 일일 점검·알림용
 - `get_approved_overrides` — 승인된 후보를 목적 파일별(overrides.json columns[], metrics.json, relations.json, 코드사전) **적용 스니펫**으로 컴파일
 - `apply_approved_candidates` — **원클릭 반영**: 승인-미반영 후보를 데이터셋 파일 4종에 파일별 백업 후 병합하고 카탈로그 핫리로드. 멱등(applied_at 스탬프+내용 중복 제거), 운영자 수기 값은 덮어쓰지 않음. 관리자 전용
 - `run_evaluation` — golden query set 평가(테이블/컬럼/지표/조인/SQL 유효성 정확도, 평균 응답시간)

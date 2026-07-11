@@ -94,12 +94,22 @@ curl -s "http://127.0.0.1:9797/api/audit/verify?day=YYYYMMDD"   # 관리자
 `/admin/quality` 하단에서도 검증할 수 있습니다. 이 기능 도입 이전에 기록된
 로그는 해시가 없어 `valid:false`로 표시됩니다(정상 — 신규 엔트리부터 보증).
 
-### 메타데이터 스케줄러
+### 메타데이터 다이제스트
+
+`GET /api/metadata/digest`(MCP `get_metadata_digest`)는 품질 점수·릴리스 게이트,
+검토 큐 백로그(대기/승인/반려), 골든 승격 후보 수, 카탈로그 규모·로드 경고를
+한 줄 헤드라인과 함께 반환합니다. 일일 점검·알림 트리거에 사용합니다.
+
+### 메타데이터 스케줄러 · 웹훅
 
 `-sync-source <profile-id> -sync-interval <duration>`(예: `24h`)로 주기적
 증분 메타데이터 동기화를 서버 내장으로 실행합니다(cron 불필요). 각 실행은
 변경 건수·품질 점수·게이트 통과 여부를 로그와 감사 로그에 남깁니다. 증분·폐기
 후보 원칙은 유지되어 업무 의미를 자동 변경하지 않습니다. 최소 간격 1분.
+
+`-digest-webhook <url>`(또는 `JAMYPG_DIGEST_WEBHOOK`)을 설정하면 매 틱마다
+다이제스트 JSON을 해당 URL로 POST합니다(Slack 등 알림 연동). `-sync-source`
+없이 웹훅만 설정해도 스케줄에 맞춰 다이제스트만 전송됩니다.
 
 ## 데이터셋 운영
 

@@ -62,6 +62,13 @@ docker run -d -p 9797:9797 -v jamypg-data:/app/data/metadb \
   `plan_gate`(기본 `true`)가 켜져 있으면 실행 전 실측 EXPLAIN을 수행해
   위험도가 `plan_gate_risk`(`low`|`medium`|`high`, 기본 `high`) 이상이면
   실행을 거부합니다 — 아래 [실행계획 승인 게이트](#실행계획-승인-게이트-plan-gate) 참조
+- **policy.max_plan_cost / max_plan_rows**: **비용 상한(절대 가드)**. `> 0`으로
+  설정하면 EXPLAIN 예상 총비용/최대 카디널리티가 이 값을 초과하는 쿼리를 실행
+  전 거부합니다. `plan_gate`와 달리 **`approve_plan`으로 우회할 수 없는 하드
+  서킷 브레이커**로, 운영 DB에서의 런어웨이 쿼리를 원천 차단합니다(`0`=비활성,
+  상한 조정은 관리자 프로파일 정책 변경). MCP 응답은 `status:
+  blocked_cost_ceiling`(run_sql_safely) / `phase: cost_ceiling`
+  (execute_with_repair)로 반환됩니다.
 - **routing**: 다중 프로파일 자동 라우팅 메타데이터
   (`schemas`/`tags`/`priority`/`default`/`discover`) —
   아래 [프로파일 라우팅](#프로파일-라우팅-여러-프로파일-자동-선택) 참조

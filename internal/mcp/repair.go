@@ -98,6 +98,23 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 		ApprovePlan:    a.ApprovePlan,
 	}, a.Fresh)
 	if err != nil {
+		var cost *dbconn.PlanCostError
+		if errors.As(err, &cost) {
+			return map[string]any{
+				"status":    "needs_fix",
+				"phase":     "cost_ceiling",
+				"live_plan": cost.Plan,
+				"measure":   cost.Measure,
+				"limit":     cost.Limit,
+				"estimated": cost.Actual,
+				"error":     err.Error(),
+				"repair": map[string]any{
+					"phase":       "cost_ceiling",
+					"suggestions": planSuggestionsFromPlan(cost.Plan),
+					"guidance":    "예상 실행 비용이 절대 상한을 초과했습니다. approve_plan으로 우회 불가 — 기간·LIMIT·필터로 쿼리를 반드시 좁히세요.",
+				},
+			}, nil
+		}
 		var gate *dbconn.PlanGateError
 		if errors.As(err, &gate) {
 			return map[string]any{
@@ -204,8 +221,19 @@ func referencedTableNames(v catalog.ValidationResult) []string {
 // present, with a sane fallback.
 func planSuggestions(gate *dbconn.PlanGateError) any {
 	if gate != nil && gate.Plan != nil {
-		return gate.Plan
+		return planSuggestionsFromPlan(gate.Plan)
 	}
+	return defaultNarrowHints()
+}
+
+func planSuggestionsFromPlan(p *dbconn.PlanResult) any {
+	if p != nil && len(p.Suggestions) > 0 {
+		return p.Suggestions
+	}
+	return defaultNarrowHints()
+}
+
+func defaultNarrowHints() []string {
 	return []string{"기간 조건을 좁히세요", "LIMIT을 낮추세요", "인덱스가 있는 컬럼으로 필터하세요"}
 }
 

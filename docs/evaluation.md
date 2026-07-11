@@ -89,6 +89,29 @@ go run ./cmd/jamypg-goldgen -data ./data/metadb -n 80 -keep 5
 `FeedbackEligible`과 동일한 신뢰 경계를 사용하므로, 승인되지 않았거나 스코프가
 다른(dataset/tenant) 피드백은 절대 승격 후보에 오르지 않는다.
 
+## 실패 원인 분류 — `miss_breakdown`
+
+`run_evaluation` 응답에는 케이스별 `missing`을 카테고리로 집계한
+`miss_breakdown`이 포함된다 — "무엇이 얼마나 틀렸나"를 넘어 "왜 틀렸나"를
+알려 개선 우선순위를 데이터로 정한다.
+
+| 카테고리 | 의미 | 개선 레버 |
+| --- | --- | --- |
+| `table_miss` / `column_miss` | 스키마 링킹(테이블/컬럼 미검색) | 논리명·동의어·용어집 보강, 검색 랭킹 |
+| `join_broken` | 조인 그래프 경로 없음 | relation 후보/preferred_joins |
+| `metric_miss` | 지표 사전 누락 | metric 후보 승격 |
+| `sql_invalid` | 기대 SQL 방언 검증 실패 | 골든셋 SQL 방언 정합성 |
+| `exec_error` / `row_sanity` | 실행 실패/행수 범위 이탈 | 대상 DB 데이터·기대 범위 |
+
+```jsonc
+"miss_breakdown": {
+  "clean_cases": 6, "failing_cases": 2,
+  "by_category": { "table_miss": 2, "join_broken": 1 },
+  "priority": [ {"category":"table_miss","occurrences":2,"cases":2}, ... ],
+  "recommendation": "스키마 링킹이 최대 실패 원인입니다. ..."
+}
+```
+
 ## 미스 분석 워크플로
 
 ```sh

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -213,7 +214,100 @@ func (c *Catalog) RunEvaluationExec(ctx context.Context, goldenPath string, topK
 		summary["row_sanity_checked"] = sanityTotal
 		summary["row_sanity_rate"] = ratio(sanityOK, max(1, sanityTotal))
 	}
+	summary["miss_breakdown"] = classifyMisses(results)
 	return summary, nil
+}
+
+// missCategory maps a Missing-entry prefix to a human failure bucket so the
+// eval report says WHY cases fail, not just that they do — driving improvement
+// priority (schema linking vs join graph vs SQL dialect vs data).
+func missCategory(entry string) string {
+	switch {
+	case strings.HasPrefix(entry, "table:"):
+		return "table_miss" // wrong/absent table selection (schema linking)
+	case strings.HasPrefix(entry, "column:"):
+		return "column_miss" // column not retrieved (schema linking)
+	case strings.HasPrefix(entry, "metric:"):
+		return "metric_miss" // metric not in dictionary
+	case strings.HasPrefix(entry, "join:"):
+		return "join_broken" // no path in the join graph
+	case strings.HasPrefix(entry, "sql_error:"):
+		return "sql_invalid" // expected_sql fails catalog validation
+	case strings.HasPrefix(entry, "exec:"):
+		return "exec_error" // expected_sql errors on the DB
+	case strings.HasPrefix(entry, "rows:"):
+		return "row_sanity" // executed row count out of expected bounds
+	default:
+		return "other"
+	}
+}
+
+// classifyMisses aggregates per-case Missing entries into category counts plus
+// the count of fully-passing cases, ordered by impact via a stable slice.
+func classifyMisses(results []EvalCaseResult) map[string]any {
+	counts := map[string]int{}
+	casesWith := map[string]int{}
+	clean := 0
+	for _, r := range results {
+		if len(r.Missing) == 0 {
+			clean++
+			continue
+		}
+		seenCat := map[string]bool{}
+		for _, m := range r.Missing {
+			cat := missCategory(m)
+			counts[cat]++
+			if !seenCat[cat] {
+				casesWith[cat]++
+				seenCat[cat] = true
+			}
+		}
+	}
+	// priority ordering: which category blocks the most cases
+	ranked := make([]MissCatRank, 0, len(counts))
+	for cat, occ := range counts {
+		ranked = append(ranked, MissCatRank{Category: cat, Occurrences: occ, Cases: casesWith[cat]})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Cases != ranked[j].Cases {
+			return ranked[i].Cases > ranked[j].Cases
+		}
+		return ranked[i].Category < ranked[j].Category
+	})
+	return map[string]any{
+		"clean_cases":    clean,
+		"failing_cases":  len(results) - clean,
+		"by_category":    counts,
+		"priority":       ranked,
+		"recommendation": missRecommendation(ranked),
+	}
+}
+
+// MissCatRank is one failure category with its impact counts.
+type MissCatRank struct {
+	Category    string `json:"category"`
+	Occurrences int    `json:"occurrences"`
+	Cases       int    `json:"cases"`
+}
+
+func missRecommendation(ranked []MissCatRank) string {
+	if len(ranked) == 0 {
+		return "모든 골든 케이스가 통과했습니다."
+	}
+	switch ranked[0].Category {
+	case "table_miss", "column_miss":
+		return "스키마 링킹이 최대 실패 원인입니다. 논리명·동의어·용어집 보강(suggest_semantic_metadata) 또는 검색 랭킹을 점검하세요."
+	case "join_broken":
+		return "조인 경로 누락이 최대 실패 원인입니다. suggest_model_candidates(relation) 또는 preferred_joins를 보강하세요."
+	case "metric_miss":
+		return "지표 사전 누락이 최대 실패 원인입니다. suggest_model_candidates(metric)로 후보를 검토·승격하세요."
+	case "sql_invalid":
+		return "기대 SQL의 방언 검증 실패가 최대 원인입니다. 골든셋 SQL의 방언 정합성을 점검하세요."
+	case "exec_error", "row_sanity":
+		return "실행 단계 실패가 최대 원인입니다. 대상 DB 데이터/기대 행수 범위를 점검하세요."
+	default:
+		return "실패 원인이 분산되어 있습니다. priority 상위 항목부터 개선하세요."
+	}
 }
 
 func i64str(v *int64) string {

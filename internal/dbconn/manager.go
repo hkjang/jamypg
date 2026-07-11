@@ -275,6 +275,34 @@ func (e *PlanGateError) Error() string {
 		e.Plan.Risk, e.Threshold)
 }
 
+// PlanCostError is returned when an EXPLAIN estimate exceeds an absolute cost
+// ceiling (Policy.MaxPlanCost / MaxPlanRows). Unlike PlanGateError it CANNOT be
+// bypassed with ApprovePlan — it is a hard circuit breaker requiring the query
+// to be narrowed (or an admin to raise the profile ceiling).
+type PlanCostError struct {
+	Plan    *PlanResult
+	Limit   int64
+	Actual  int64
+	Measure string // "cost" | "rows"
+}
+
+func (e *PlanCostError) Error() string {
+	return fmt.Sprintf("execution blocked by cost ceiling: estimated %s %d exceeds the profile cap %d; narrow the query (filters/LIMIT) — this hard cap is not bypassable with plan approval",
+		e.Measure, e.Actual, e.Limit)
+}
+
+// costCeilingError returns a PlanCostError if the plan's estimated cost or
+// cardinality exceeds a configured absolute ceiling, else nil.
+func costCeilingError(plan *PlanResult, pol Policy) *PlanCostError {
+	if pol.MaxPlanCost > 0 && plan.TotalCost > pol.MaxPlanCost {
+		return &PlanCostError{Plan: plan, Limit: pol.MaxPlanCost, Actual: plan.TotalCost, Measure: "cost"}
+	}
+	if pol.MaxPlanRows > 0 && plan.MaxCardinality > pol.MaxPlanRows {
+		return &PlanCostError{Plan: plan, Limit: pol.MaxPlanRows, Actual: plan.MaxCardinality, Measure: "rows"}
+	}
+	return nil
+}
+
 // Execute validates, bounds, runs, and audits one read-only query.
 func (m *Manager) Execute(ctx context.Context, profileID, sqlText string, opts ExecOptions) (*QueryResult, error) {
 	p, err := m.store.GetProfileByID(ctx, profileID)
@@ -296,12 +324,21 @@ func (m *Manager) Execute(ctx context.Context, profileID, sqlText string, opts E
 	// plans on the operational DB unless the caller has approved. Skipped
 	// when disabled by policy, when the caller approved, or for previews
 	// (which are already row-capped to default_max_rows).
-	if p.Policy.planGateEnabled() && !opts.ApprovePlan && !opts.Preview {
+	costGuard := p.Policy.MaxPlanCost > 0 || p.Policy.MaxPlanRows > 0
+	if (p.Policy.planGateEnabled() || costGuard) && !opts.Preview {
 		plan, perr := m.ExplainPlan(ctx, profileID, sqlText)
-		if perr == nil && plan != nil && riskRank(plan.Risk) >= riskRank(p.Policy.PlanGateRisk) {
-			gateErr := &PlanGateError{Plan: plan, Threshold: p.Policy.PlanGateRisk}
-			m.audit(p.ID, sqlText, opts, nil, 0, gateErr)
-			return nil, gateErr
+		if perr == nil && plan != nil {
+			// hard cost ceiling first — not bypassable with ApprovePlan.
+			if ce := costCeilingError(plan, p.Policy); ce != nil {
+				m.audit(p.ID, sqlText, opts, nil, 0, ce)
+				return nil, ce
+			}
+			// reviewable risk gate — bypassable after explicit plan approval.
+			if p.Policy.planGateEnabled() && !opts.ApprovePlan && riskRank(plan.Risk) >= riskRank(p.Policy.PlanGateRisk) {
+				gateErr := &PlanGateError{Plan: plan, Threshold: p.Policy.PlanGateRisk}
+				m.audit(p.ID, sqlText, opts, nil, 0, gateErr)
+				return nil, gateErr
+			}
 		}
 		// a failed EXPLAIN (perr != nil) does not block execution — the query
 		// itself will surface the real error with proper classification.

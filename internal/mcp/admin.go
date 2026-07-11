@@ -76,6 +76,9 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.cat().SuggestModelCandidates(req.Tables, req.Kinds))
 	})
+	mux.HandleFunc("GET /api/metadata/digest", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, s.MetadataDigest())
+	})
 	mux.HandleFunc("GET /api/audit/verify", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return

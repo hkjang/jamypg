@@ -13,19 +13,27 @@ import (
 // stays incremental and deletions remain retire-candidates — so it is safe to
 // leave running. Cron-free; lives in the server process.
 
-// StartScheduler launches the background sync loop unless interval<=0. The loop
+// SchedulerConfig configures the background metadata loop.
+type SchedulerConfig struct {
+	Source     string        // db profile id to sync (required to sync)
+	Interval   time.Duration // <=0 disables the whole scheduler
+	WebhookURL string        // optional: POST the digest here each tick
+}
+
+// StartScheduler launches the background loop unless interval<=0. The loop
 // stops when ctx is canceled. The first run fires after one interval (not at
-// boot) to avoid racing startup.
-func (s *Server) StartScheduler(ctx context.Context, source string, interval time.Duration) {
-	if interval <= 0 || source == "" {
+// boot) to avoid racing startup. A webhook with no source still fires the
+// digest push on schedule (sync is skipped).
+func (s *Server) StartScheduler(ctx context.Context, cfg SchedulerConfig) {
+	if cfg.Interval <= 0 || (cfg.Source == "" && cfg.WebhookURL == "") {
 		return
 	}
-	if interval < time.Minute {
-		interval = time.Minute // floor: never hammer the source DB
+	if cfg.Interval < time.Minute {
+		cfg.Interval = time.Minute // floor: never hammer the source DB
 	}
-	log.Printf("metadata scheduler: incremental sync of source %q every %s", source, interval)
+	log.Printf("metadata scheduler: every %s (source=%q webhook=%v)", cfg.Interval, cfg.Source, cfg.WebhookURL != "")
 	go func() {
-		t := time.NewTicker(interval)
+		t := time.NewTicker(cfg.Interval)
 		defer t.Stop()
 		for {
 			select {
@@ -33,7 +41,12 @@ func (s *Server) StartScheduler(ctx context.Context, source string, interval tim
 				log.Printf("metadata scheduler stopped")
 				return
 			case <-t.C:
-				s.runScheduledSync(ctx, source)
+				if cfg.Source != "" {
+					s.runScheduledSync(ctx, cfg.Source)
+				}
+				if cfg.WebhookURL != "" {
+					s.postDigestWebhook(ctx, cfg.WebhookURL, s.MetadataDigest())
+				}
 			}
 		}
 	}()
