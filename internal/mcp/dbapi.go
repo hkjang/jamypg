@@ -360,6 +360,40 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.mcpDiffSnapshots(req.Source, req.From, req.To))
 	})
+	mux.HandleFunc("POST /api/metadata/profile", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Source      string   `json:"source"`
+			Tables      []string `json:"tables"`
+			Mode        string   `json:"mode"`
+			SampleLimit int      `json:"sample_limit"`
+			PIIColumns  []string `json:"pii_columns"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.canUseProfileID(r.Context(), actor, req.Source); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpProfileMetadata(r.Context(), req.Source, req.Tables, req.Mode, req.SampleLimit, req.PIIColumns))
+	})
+	mux.HandleFunc("GET /api/metadata/profiles/{source}", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		src := r.PathValue("source")
+		if err := s.canUseProfileID(r.Context(), actor, src); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpProfileStatus(src))
+	})
 
 	mux.HandleFunc("POST /api/query/explain", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)

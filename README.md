@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(35종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(36종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -361,6 +361,7 @@ Invoke-RestMethod `
 - `run_metadata_sync` — 원천 DB의 물리 모델(스키마·테이블·뷰·컬럼·PK/FK/Unique/Check·인덱스·코멘트·행수추정)을 버전 스냅숏으로 수집하고 이전 스냅숏 대비 변경분을 반환. 기본 증분(스키마 해시 동일 시 스킵). 삭제는 즉시 반영하지 않고 폐기 후보로 표시. **물리 정보만 수집하며 업무 의미(논리명·지표)는 운영 카탈로그에 쓰지 않음**
 - `get_sync_status` — 원천별 저장된 스냅숏 목록(최신순, 수집시각·스키마해시·객체수)
 - `diff_metadata_snapshots` — 두 스냅숏 간 변경분(테이블/컬럼 추가·삭제, 타입/Null/키/코멘트/인덱스/뷰SQL 변경, 각각 심각도·처리방침) 계산
+- `profile_metadata_assets` — 컬럼 통계(행수·Null비율·distinct·min/max·상위값·포맷패턴)를 비용 제어(모드별 샘플: fast 2k / standard 100k / deep 전체)·**개인정보 보호형**(민감 컬럼은 원본값·min/max·상위값 미저장, 길이·패턴·건수만)으로 계산. 결과는 검토 후보이며 운영 카탈로그(column_stats)에 자동 반영하지 않음
 - `record_feedback` — 질문/분석/후보/SQL/검증오류/채택여부/실행시간을 서버가 부여한 actor/session/dataset 범위와 함께 `pending/untrusted` 검토 큐에 저장; 승인 전에는 검색·프롬프트·학습에 사용하지 않음
 - `review_feedback` — **관리자 전용** 피드백 검토 큐 조회 및 approve/reject; 승인된 레코드만 trusted 상태로 few-shot·검색 부스트·학습 룰에 사용
 - `list_datasets` / `get_dataset` — 서버가 참조하는 모든 JSON 데이터셋의 라이브 레지스트리: 용도, 스키마, 사용 도구, 필수/편집가능 여부, 현재 상태(존재·크기·로드 건수·로드 이슈)와 내용 샘플

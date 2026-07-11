@@ -112,6 +112,50 @@ func (s *Server) mcpDiffSnapshots(sourceID, fromID, toID string) map[string]any 
 	}
 }
 
+func (s *Server) mcpProfileMetadata(ctx context.Context, sourceID string, tables []string, mode string, sampleLimit int, piiColumns []string) map[string]any {
+	req := metasync.ProfileRequest{
+		SourceID: sourceID, Tables: tables, Mode: metasync.ProfileMode(mode),
+		SampleLimit: sampleLimit, PIIColumns: piiColumns,
+	}
+	res, err := s.metasyncService().Profile(ctx, req)
+	if err != nil {
+		return map[string]any{"status": "profile_failed", "error": err.Error()}
+	}
+	sensitive := 0
+	for _, c := range res.Columns {
+		if c.Sensitive {
+			sensitive++
+		}
+	}
+	return map[string]any{
+		"status":            "ok",
+		"profile_id":        res.ProfileID,
+		"mode":              res.Mode,
+		"sample_limit":      res.SampleLimit,
+		"scanned_tables":    res.ScannedTables,
+		"column_count":      len(res.Columns),
+		"sensitive_columns": sensitive,
+		"columns":           res.Columns,
+		"warnings":          res.Warnings,
+		"note":              res.Note,
+	}
+}
+
+func (s *Server) mcpProfileStatus(sourceID string) map[string]any {
+	list, err := s.metasyncService().Profiles(sourceID)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, r := range list {
+		out = append(out, map[string]any{
+			"profile_id": r.ProfileID, "mode": r.Mode, "profiled_at": r.ProfiledAt,
+			"scanned_tables": r.ScannedTables, "sample_limit": r.SampleLimit,
+		})
+	}
+	return map[string]any{"source_id": sourceID, "profiles": out, "count": len(out)}
+}
+
 func snapshotSummary(s *metasync.RawSnapshot) map[string]any {
 	return map[string]any{
 		"snapshot_id":  s.SnapshotID,

@@ -1,4 +1,4 @@
-# MCP 도구 레퍼런스 (30종)
+# MCP 도구 레퍼런스 (36종)
 
 모든 도구는 `tools/call`로 호출하며, 결과는 `content[0].text`(JSON 문자열)와
 `structuredContent`(동일 객체)로 반환됩니다. 스키마 원본은 `tools/list`가
@@ -16,7 +16,8 @@
 | ④ DB 선택 | `list_db_profiles`, `route_db_profile` |
 | ⑤ 검증·선택 | `validate_sql`, `rank_candidates`, `explain_sql`, `run_sql_safely` |
 | ⑥ 환류 | `record_feedback`, `review_feedback`, `learn_from_feedback` |
-| 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `suggest_join_relations`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog` |
+| 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `suggest_join_relations`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog`, `profile_metadata_assets` |
+| 메타데이터 수집 | `list_metadata_sources`, `discover_metadata`, `run_metadata_sync`, `get_sync_status`, `diff_metadata_snapshots`, `profile_metadata_assets` → [metadata-sync.md](metadata-sync.md) |
 
 ---
 
@@ -411,3 +412,28 @@ key-like 컬럼, 타입, PK/FK 근거로 `topology_relations.json` 후보를 만
 데이터셋 레지스트리(19종)의 조회·교체·제거·리로드. 동작·안전장치는
 [datasets.md](datasets.md)와 [rest-api.md](rest-api.md) 참조 — REST API와
 동일 코드입니다.
+
+### profile_metadata_assets
+
+소스 DB 테이블의 **컬럼별 통계**(행/NULL/distinct 건수, min/max, top values,
+포맷 패턴)를 **비용 상한**과 **개인정보 보호** 규칙 아래 계산합니다
+(FR-META-006/007/008). 결과는 **검토 대상 후보**일 뿐 운영 카탈로그의
+`column_stats`에 자동 반영되지 않습니다.
+
+| 파라미터 | 설명 |
+| --- | --- |
+| `source` (필수) | 메타데이터 소스 id(DB 프로파일 id) |
+| `tables` | 스키마-한정 테이블 목록. 생략 시 최신 스냅숏의 전체 테이블(상한 적용) |
+| `mode` | `fast`(2k행 샘플, NULL·타입만) / `standard`(기본, 100k행 샘플 + distinct·min/max·top·패턴) / `deep`(전체 스캔) |
+| `sample_limit` | 모드 기본 샘플 상한 재정의(0 = 모드 기본값) |
+| `pii_columns` | 추가 민감 컬럼: `"schema.table.col"` 또는 `"*.col"` |
+
+- **민감 컬럼**(이름이 PII/신용 패턴과 일치하거나 `pii_columns`에 지정)은 원본
+  값·min/max·top values를 **저장하지 않고** 길이 범위·포맷 패턴·NULL 비율·
+  distinct 건수만 남깁니다.
+- 응답: `status`, `profile_id`, `mode`, `sample_limit`, `scanned_tables`,
+  `column_count`, `sensitive_columns`, `columns[]`(`ColumnProfile`), `warnings`,
+  `note`.
+- DB 접속 도구라 standalone HTTP에서는 admin 토큰, 인증 모드에서는 프로파일별
+  권한 필터가 적용됩니다. 모드·비용 제어·개인정보 보호 규칙·출력 필드·저장
+  위치는 [metadata-sync.md](metadata-sync.md#데이터-프로파일링-자동비용제어개인정보-보호형) 참조.

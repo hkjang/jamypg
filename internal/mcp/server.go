@@ -428,6 +428,13 @@ func (s *Server) tools() []map[string]any {
 			"from":   str("baseline snapshot id"),
 			"to":     str("target snapshot id"),
 		}, []string{"source", "from", "to"})),
+		tool("profile_metadata_assets", "Compute column statistics (row/null/distinct counts, min/max, top values, format patterns) for a source's tables, with bounded cost and privacy protection. Modes: fast (null presence over a 2k-row sample), standard (default; null ratio, distinct, min/max, top values over a 100k-row sample), deep (full scan). SENSITIVE columns (names matching PII/credit patterns, or listed in pii_columns) never store raw values, min/max, or top values — only length range, format pattern, null ratio, and distinct count. Results are reviewable candidates and are NOT written into the operational catalog's column_stats.", objectSchema(map[string]any{
+			"source":       str("metadata source id (db profile id)"),
+			"tables":       arrayOf("string", "Schema-qualified tables to profile; omit for all tables in the latest snapshot (capped)"),
+			"mode":         str("fast | standard (default) | deep"),
+			"sample_limit": integer("Override the mode's sample-row cap (0 = mode default)"),
+			"pii_columns":  arrayOf("string", "Extra sensitive columns: \"schema.table.col\" or \"*.col\""),
+		}, []string{"source"})),
 		tool("record_feedback", "Append bounded NL2SQL feedback to the review queue. Actor/session/dataset scope and trust state are server-owned; feedback never affects prompts, retrieval, or learning until an administrator approves it with review_feedback.", objectSchema(map[string]any{
 			"question":          str("Original question"),
 			"analysis":          map[string]any{"type": "object", "description": "analyze_question output", "additionalProperties": true},
@@ -564,12 +571,13 @@ var adminOnlyTools = map[string]bool{
 // open-world annotation, it ensures standalone HTTP applies the same master
 // token gate to every such tool. Calls without a profile are catalog-only.
 var dbProfileTools = map[string]bool{
-	"run_sql_safely":    true,
-	"explain_sql":       true,
-	"run_evaluation":    true,
-	"route_db_profile":  true,
-	"discover_metadata": true,
-	"run_metadata_sync": true,
+	"run_sql_safely":          true,
+	"explain_sql":             true,
+	"run_evaluation":          true,
+	"route_db_profile":        true,
+	"discover_metadata":       true,
+	"run_metadata_sync":       true,
+	"profile_metadata_assets": true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -594,7 +602,7 @@ func (s *Server) authorizeDBProfileTool(ctx context.Context, name string, argume
 	// explicit profile value. The metadata-sync tools address the DB by
 	// `source` and always touch it.
 	probesAll := name == "route_db_profile" ||
-		name == "discover_metadata" || name == "run_metadata_sync" ||
+		name == "discover_metadata" || name == "run_metadata_sync" || name == "profile_metadata_assets" ||
 		(name == "run_sql_safely" && strings.EqualFold(strings.TrimSpace(a.Profile), "auto"))
 	// Retrieval-only evaluation never opens a DB, even if a client happens to
 	// include a profile value.
@@ -809,6 +817,18 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.mcpDiffSnapshots(a.Source, a.From, a.To), nil
+	case "profile_metadata_assets":
+		var a struct {
+			Source      string   `json:"source"`
+			Tables      []string `json:"tables"`
+			Mode        string   `json:"mode"`
+			SampleLimit int      `json:"sample_limit"`
+			PIIColumns  []string `json:"pii_columns"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.mcpProfileMetadata(ctx, a.Source, a.Tables, a.Mode, a.SampleLimit, a.PIIColumns), nil
 	case "run_sql_safely":
 		var a struct {
 			SQL            string `json:"sql"`
