@@ -71,6 +71,24 @@ go run ./cmd/jamypg-goldgen -data ./data/metadb -n 80 -keep 5
 권장 운영: 분기마다 재생성 + 새 업무 질문을 수작업 케이스로 상단에 추가
 (`-keep` 값 증가).
 
+## 골든셋 자동 성장 — 피드백 승격
+
+운영 중 성공한 실제 질의를 골든셋으로 승격해 평가셋이 스스로 자라게 한다.
+사람 게이트를 거친 피드백만 대상이며(fail-closed), 승격은 명시적 관리자 행위다.
+
+1. `record_feedback`로 수집된 질의 중 **성공·실행**된 것을 운영자가
+   `review_feedback`로 승인(trusted+approved).
+2. `suggest_golden_from_feedback`(REST `GET /api/golden/candidates`)로 골든셋
+   후보를 조회 — 승인·성공·실행됐고 아직 골든셋에 없는 것만(질문/SQL 정규화로
+   중복 제외), 질문·기대 SQL/테이블/컬럼과 `feedback_id` 포함.
+3. `promote_golden_queries{feedback_ids}`(REST `POST /api/golden/promote`,
+   관리자)로 `golden_queries.json`에 백업 후 추가하고 카탈로그 리로드. 각
+   항목에 `promoted from feedback <id>` 노트가 남는다.
+4. `run_evaluation`으로 확장된 골든셋의 정확도를 재확인.
+
+`FeedbackEligible`과 동일한 신뢰 경계를 사용하므로, 승인되지 않았거나 스코프가
+다른(dataset/tenant) 피드백은 절대 승격 후보에 오르지 않는다.
+
 ## 미스 분석 워크플로
 
 ```sh

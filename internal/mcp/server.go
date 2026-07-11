@@ -511,6 +511,12 @@ func (s *Server) tools() []map[string]any {
 		tool("learn_from_feedback", "ADMIN: promote repeated patterns from trusted, operator-approved, in-scope feedback plus the DB execution audit. Pending/untrusted/foreign-scope and duplicate feedback is skipped. Persists learned_rules.json and hot-applies search penalties and LEARNED_* validation warnings.", objectSchema(map[string]any{
 			"min_occurrences": integer("Minimum repetitions before a pattern becomes a rule (default 3)"),
 		}, nil)),
+		tool("suggest_golden_from_feedback", "List golden-query CANDIDATES derived from approved + successful + executed feedback that is not already in the golden set (deduped by normalized question and SQL). Each candidate carries the question, expected SQL/tables/columns and its source feedback_id. Only trust-boundary-approved feedback is eligible (fail-closed). Use to grow the evaluation set from real production traffic.", objectSchema(map[string]any{
+			"limit": integer("Max candidates (default 50, cap 200)"),
+		}, nil)),
+		tool("promote_golden_queries", "ADMIN: append chosen feedback-derived candidates (by feedback_id, from suggest_golden_from_feedback) to golden_queries.json with a backup, then hot-reload the catalog. Duplicates are skipped. This is the explicit operator act that turns approved feedback into evaluation truth.", objectSchema(map[string]any{
+			"feedback_ids": arrayOf("string", "feedback_id values to promote (from suggest_golden_from_feedback)"),
+		}, []string{"feedback_ids"})),
 		tool("prepare_sql_context", "★ ONE-CALL PIPELINE: runs analyze_question → search_schema → get_metric_definition → get_schema_context → get_join_paths → build_sql_skeleton in a single call and returns one bundle (analysis, selected_tables, metrics, schema_context, join_paths, skeleton, expected_output_columns, next_step). Start HERE for most questions, then just fill the skeleton's /* SLOT */ markers, call validate_sql, and optionally run_sql_safely. Saves orchestrating 6+ calls and prevents skipping a step.", objectSchema(map[string]any{
 			"question":          str("Natural language question (Korean/English)"),
 			"tables":            arrayOf("string", "Optional explicit tables; defaults to top search hits"),
@@ -572,6 +578,7 @@ func annotateTools(list []map[string]any) []map[string]any {
 		"review_feedback":           {destructive: false, idempotent: false}, // changes review state/audit time
 		"decide_candidates":         {destructive: false, idempotent: false}, // persists review decisions
 		"apply_approved_candidates": {destructive: true, idempotent: true},   // merges into dataset files (backed up)
+		"promote_golden_queries":    {destructive: true, idempotent: true},   // appends to golden_queries.json (backed up)
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -603,6 +610,7 @@ var adminOnlyTools = map[string]bool{
 	"review_feedback":           true,
 	"decide_candidates":         true,
 	"apply_approved_candidates": true,
+	"promote_golden_queries":    true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -1125,6 +1133,30 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.cat().LearnFromFeedback(a.MinOccurrences)
+	case "suggest_golden_from_feedback":
+		var a struct {
+			Limit int `json:"limit"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SuggestGoldenFromFeedback(a.Limit), nil
+	case "promote_golden_queries":
+		var a struct {
+			FeedbackIDs []string `json:"feedback_ids"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		res := s.cat().PromoteGolden(a.FeedbackIDs, time.Now())
+		if applied, _ := res["applied"].(int); applied > 0 {
+			if reload, err := s.reloadCatalog(); err == nil {
+				res["reloaded"] = reload
+			} else {
+				res["reload_error"] = err.Error()
+			}
+		}
+		return res, nil
 	case "prepare_sql_context":
 		var a struct {
 			Question         string            `json:"question"`

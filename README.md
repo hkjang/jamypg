@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(45종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(47종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -380,6 +380,8 @@ Invoke-RestMethod `
 - `apply_approved_candidates` — **원클릭 반영**: 승인-미반영 후보를 데이터셋 파일 4종에 파일별 백업 후 병합하고 카탈로그 핫리로드. 멱등(applied_at 스탬프+내용 중복 제거), 운영자 수기 값은 덮어쓰지 않음. 관리자 전용
 - `run_evaluation` — golden query set 평가(테이블/컬럼/지표/조인/SQL 유효성 정확도, 평균 응답시간)
 - `learn_from_feedback` — 반복 실패 패턴을 learned rule로 승격: 동일 검증오류 반복(예방 경고), 테이블 오선택 교정(검색 패널티), 컬럼 교정(validate_sql 경고). `learned_rules.json`에 영속화되어 운영자가 검토/수정 가능
+- `suggest_golden_from_feedback` — 승인·성공·실행된 피드백을 **골든셋 후보**로 제시(질문/기대 SQL·테이블·컬럼, 질문/SQL 정규화로 기존 골든셋 중복 제외). trust 경계 승인분만 대상(fail-closed)
+- `promote_golden_queries` — 선택 후보(feedback_id)를 `golden_queries.json`에 백업 후 추가하고 카탈로그 리로드. 운영 트래픽으로 평가셋을 성장시키는 명시적 관리자 행위. 관리자 전용
 
 `run_sql_safely` validates SQL and, when a DB profile is supplied, executes it
 read-only against the target database (postgres/mysql/mariadb) with query

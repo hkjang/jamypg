@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,6 +105,36 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		res, _ := s.applyApprovedCandidates()
 		s.adminAudit(r, "reviews.apply", s.reviewerFromRequest(r), nil)
+		writeJSON(w, http.StatusOK, res)
+	})
+	mux.HandleFunc("GET /api/golden/candidates", func(w http.ResponseWriter, r *http.Request) {
+		limit := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		writeJSON(w, http.StatusOK, s.cat().SuggestGoldenFromFeedback(limit))
+	})
+	mux.HandleFunc("POST /api/golden/promote", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		var req struct {
+			FeedbackIDs []string `json:"feedback_ids"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		res := s.cat().PromoteGolden(req.FeedbackIDs, time.Now())
+		if applied, _ := res["applied"].(int); applied > 0 {
+			if reload, err := s.reloadCatalog(); err == nil {
+				res["reloaded"] = reload
+			} else {
+				res["reload_error"] = err.Error()
+			}
+		}
+		s.adminAudit(r, "golden.promote", s.reviewerFromRequest(r), nil)
 		writeJSON(w, http.StatusOK, res)
 	})
 	mux.HandleFunc("POST /api/reviews/decide", func(w http.ResponseWriter, r *http.Request) {
