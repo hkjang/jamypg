@@ -458,6 +458,9 @@ func (s *Server) tools() []map[string]any {
 			"limit":       integer("Queue page size when feedback_id is omitted (default 50, max 200)"),
 		}, nil)),
 		tool("get_catalog_health", "Return catalog compilation status: load/validation issues, metadata coverage gaps, PII columns, and dictionary sizes.", objectSchema(map[string]any{}, nil)),
+		tool("get_metadata_quality", "Score every table's metadata quality (completeness, consistency, relationship, profiling, metric linkage, usability, security) 0–100 with an A–E grade, aggregate by schema/domain, and list the top improvement targets. Pass gate=true to instead evaluate the release gate: whether blocking conditions (load errors, broken metrics/certified joins, unclassified PII, quality below the release floor) would stop a catalog release.", objectSchema(map[string]any{
+			"gate": boolSchema("true → evaluate the release gate (pass/fail + blocking violations) instead of the full per-table report"),
+		}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
 			"tables": arrayOf("string", "Optional tables to restrict the search"),
@@ -963,6 +966,17 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		return s.reviewFeedback(ctx, a.FeedbackID, a.Decision, a.Notes, a.Limit)
 	case "get_catalog_health":
 		return s.cat().Health(), nil
+	case "get_metadata_quality":
+		var a struct {
+			Gate bool `json:"gate"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Gate {
+			return s.cat().QualityGate(), nil
+		}
+		return s.cat().QualityReport(), nil
 	case "find_filter_columns":
 		var a struct {
 			Values []string `json:"values"`

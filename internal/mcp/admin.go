@@ -47,6 +47,13 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, s.cat().Health())
 	})
+	mux.HandleFunc("GET /api/metadata/quality", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("gate") == "true" {
+			writeJSON(w, http.StatusOK, s.cat().QualityGate())
+			return
+		}
+		writeJSON(w, http.StatusOK, s.cat().QualityReport())
+	})
 	mux.HandleFunc("GET /api/datasets", func(w http.ResponseWriter, _ *http.Request) {
 		storage := "file"
 		if s.datasetsInDB() {

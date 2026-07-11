@@ -330,13 +330,12 @@ REST로는 `POST /api/metadata/sync` → `POST /api/metadata/diff` 순으로 동
 - AI 의미 보강(논리명·설명·시맨틱 타입)
 - 코드 사전 / 지표(metric) / 관계(relation) 후보 생성
 - 리니지(lineage)
-- 품질 점수(quality scoring)
 - 승인 워크플로 UI
 - 스케줄러
 
 다만 후보·출처·승인 **모델은 이미 `types.go`에 자리 잡혀 있어**(Generator,
 ReviewStatus, Provenance) 위 단계들이 그 위에 얹히도록 설계되어 있습니다.
-로드맵상 **Phase 3-10**은 후속 작업으로 남아 있습니다.
+품질 점수·릴리스 게이트(Phase 4)는 [metadata-quality.md](metadata-quality.md)에 구현되어 있습니다. 로드맵상 나머지 후속 단계가 남아 있습니다.
 
 ## 참고
 
