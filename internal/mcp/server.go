@@ -410,6 +410,15 @@ func (s *Server) tools() []map[string]any {
 			"fresh":           boolSchema("true → bypass the 60s result cache and hit the DB"),
 			"approve_plan":    boolSchema("true → bypass the execution-plan approval gate after a prior status=plan_approval_required response; set only with explicit user approval"),
 		}, []string{"sql"})),
+		tool("execute_with_repair", "Self-correcting execution: validate → run read-only → diagnose in ONE call, and on any recoverable failure return a `repair` kit with everything needed to fix the SQL in one more turn — the failure phase (validation|plan|execution|empty_result), the classified error_code (PG-…/MY-…) with a Korean hint, catalog fix_hints, and the SCHEMA of the referenced tables so column/table names can be corrected in place. status=needs_fix when a fix is required, executed_empty for zero rows (with zero_row_hints), executed on success. Same guardrails as run_sql_safely; this just reshapes the response to halve repair round-trips. Prefer this over run_sql_safely when you expect to iterate.", objectSchema(map[string]any{
+			"sql":             str("SQL to validate/execute"),
+			"question":        str("Original NL question (optional) — sharpens the schema context returned for repair"),
+			"limit":           integer("Row limit (capped by the profile's max_rows)"),
+			"profile":         str("DB profile id (or 'auto' to route); omit for dry-run validation only"),
+			"timeout_seconds": integer("Query timeout override"),
+			"fresh":           boolSchema("true → bypass the 60s result cache"),
+			"approve_plan":    boolSchema("true → bypass the plan-approval gate after a prior plan phase; only with user approval"),
+		}, []string{"sql"})),
 		tool("list_metadata_sources", "List DB profiles usable as automated metadata-collection sources (source_id, name, type, masked connect target). Use a source_id with discover_metadata / run_metadata_sync / diff_metadata_snapshots. Physical metadata is auto-collected; business meaning stays approval-based.", objectSchema(map[string]any{}, nil)),
 		tool("discover_metadata", "List the non-system schemas available on a metadata source database, so you can scope a sync. Read-only; queries information_schema only.", objectSchema(map[string]any{
 			"source": str("metadata source id (a db profile id from list_metadata_sources)"),
@@ -602,6 +611,7 @@ var adminOnlyTools = map[string]bool{
 // token gate to every such tool. Calls without a profile are catalog-only.
 var dbProfileTools = map[string]bool{
 	"run_sql_safely":          true,
+	"execute_with_repair":     true,
 	"explain_sql":             true,
 	"run_evaluation":          true,
 	"route_db_profile":        true,
@@ -859,6 +869,12 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.mcpProfileMetadata(ctx, a.Source, a.Tables, a.Mode, a.SampleLimit, a.PIIColumns), nil
+	case "execute_with_repair":
+		var a repairArgs
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.executeWithRepair(ctx, a)
 	case "run_sql_safely":
 		var a struct {
 			SQL            string `json:"sql"`

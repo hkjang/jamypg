@@ -14,12 +14,30 @@
 | ③ 근거 확보 | `get_metric_definition`, `get_join_paths`, `get_schema_context` |
 | ④ SQL 생성 | `build_sql_skeleton` |
 | ④ DB 선택 | `list_db_profiles`, `route_db_profile` |
-| ⑤ 검증·선택 | `validate_sql`, `rank_candidates`, `explain_sql`, `run_sql_safely` |
+| ⑤ 검증·선택 | `validate_sql`, `rank_candidates`, `explain_sql`, `run_sql_safely`, `execute_with_repair` |
 | ⑥ 환류 | `record_feedback`, `review_feedback`, `learn_from_feedback` |
 | 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `suggest_join_relations`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog`, `profile_metadata_assets` |
 | 메타데이터 수집 | `list_metadata_sources`, `discover_metadata`, `run_metadata_sync`, `get_sync_status`, `diff_metadata_snapshots`, `profile_metadata_assets` → [metadata-sync.md](metadata-sync.md) |
 | 메타데이터 품질·보강 | `get_metadata_quality` → [metadata-quality.md](metadata-quality.md), `suggest_semantic_metadata` → [metadata-enrich.md](metadata-enrich.md), `suggest_model_candidates` → [metadata-candidates.md](metadata-candidates.md), `analyze_impact` → [metadata-impact.md](metadata-impact.md) |
-| 메타데이터 승인 | `review_candidates`, `decide_candidates`, `get_approved_overrides` → [metadata-review.md](metadata-review.md) |
+| 메타데이터 승인 | `review_candidates`, `decide_candidates`, `get_approved_overrides`, `apply_approved_candidates` → [metadata-review.md](metadata-review.md) |
+
+## execute_with_repair (자기수정 실행)
+
+`validate_sql` → `run_sql_safely` → 진단을 한 번에 수행하고, 복구 가능한 실패 시
+`repair` 키트를 반환해 한 턴에 SQL을 교정할 수 있게 한다. 가드레일은
+`run_sql_safely`와 동일하며 응답 형태만 자기수정에 맞춘 것이다. 반복 교정이
+예상되면 이 도구를 우선 사용한다.
+
+| status | 의미 | repair 내용 |
+| --- | --- | --- |
+| `executed` | 성공(1행 이상) | (선택) result_diagnosis |
+| `executed_empty` | 성공했으나 0행 | `zero_row_hints`, `schema_context` |
+| `needs_fix` (phase=`validation`) | 카탈로그 검증 실패 | `errors`, `fix_hints`, `schema_context` |
+| `needs_fix` (phase=`execution`) | DB 실행 오류 | `error_code`(PG-/MY-), `hint`, `schema_context` |
+| `needs_fix` (phase=`plan`) | 실행계획 위험 초과 | `live_plan`, `suggestions` (승인 시 approve_plan=true) |
+
+`repair.schema_context`는 참조 테이블의 컬럼 스키마를 담아, 컬럼/테이블명 오류를
+추가 조회 없이 그 자리에서 고치도록 한다. `profile` 미지정 시 검증만 수행(dry-run).
 
 ---
 

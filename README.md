@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(44종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(45종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -356,6 +356,7 @@ Invoke-RestMethod `
 - `list_db_profiles` — 호출자가 사용할 수 있는 DB 연결 프로파일 id와 마스킹된 접속·정책 정보를 반환
 - `route_db_profile` — 프로파일이 많을 때 SQL이 참조하는 테이블을 방언 파서로 추출해 각 프로파일의 실측 인벤토리(information_schema)·선언 스키마·방언·헬스·우선순위로 점수화하여 실행 대상 프로파일을 판정. 명확한 승자가 있으면 `decisive=true`로 `selected_profile`을, 애매하면 후보 목록을 반환. `run_sql_safely(profile="auto")`가 내부적으로 사용
 - `run_sql_safely` — 검증 후 **실제 DB 실행** (`profile` 지정 시; postgres/mysql/mariadb, read-only 세션, 타임아웃·행 제한·truncated·감사 로그). `profile="auto"`면 router가 대상 프로파일을 판정(애매하면 `profile_choice_required`로 재질문). 프로파일 미지정 시 dry-run 가드. 검증 실패 SQL은 실행하지 않음
+- `execute_with_repair` — **자기수정 실행**: 검증→실행→진단을 한 번에 수행하고 실패 시 `repair` 키트(실패 단계, 분류된 error_code+힌트, 카탈로그 fix_hints, 참조 테이블 스키마)를 반환해 한 턴에 SQL 교정 가능. 0행이면 `executed_empty`+zero_row_hints. run_sql_safely와 동일 가드, 반복이 예상되면 이 도구 우선
 - `list_metadata_sources` — 자동 메타데이터 수집 원천으로 쓸 수 있는 DB 프로파일(source_id/name/type/마스킹 접속대상) 목록. 물리 메타데이터는 자동 수집하되 업무 의미는 승인 기반으로 관리
 - `discover_metadata` — 원천 DB의 비시스템 스키마 목록 조회(information_schema만 읽는 read-only). 수집 범위 지정용
 - `run_metadata_sync` — 원천 DB의 물리 모델(스키마·테이블·뷰·컬럼·PK/FK/Unique/Check·인덱스·코멘트·행수추정)을 버전 스냅숏으로 수집하고 이전 스냅숏 대비 변경분을 반환. 기본 증분(스키마 해시 동일 시 스킵). 삭제는 즉시 반영하지 않고 폐기 후보로 표시. **물리 정보만 수집하며 업무 의미(논리명·지표)는 운영 카탈로그에 쓰지 않음**
