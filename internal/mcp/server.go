@@ -461,6 +461,10 @@ func (s *Server) tools() []map[string]any {
 		tool("get_metadata_quality", "Score every table's metadata quality (completeness, consistency, relationship, profiling, metric linkage, usability, security) 0–100 with an A–E grade, aggregate by schema/domain, and list the top improvement targets. Pass gate=true to instead evaluate the release gate: whether blocking conditions (load errors, broken metrics/certified joins, unclassified PII, quality below the release floor) would stop a catalog release.", objectSchema(map[string]any{
 			"gate": boolSchema("true → evaluate the release gate (pass/fail + blocking violations) instead of the full per-table report"),
 		}, nil)),
+		tool("suggest_semantic_metadata", "Generate REVIEWABLE candidate logical names, semantic types, and descriptions for columns that are missing them, each with evidence and a confidence score. Rule-based and offline (glossary terms, cross-table reuse, abbreviation expansion, name/type patterns) — never applied to the operational catalog. Returns a paste-ready overrides.json columns[] snippet for high-confidence items. As an LLM you can refine these candidates before an operator approves them.", objectSchema(map[string]any{
+			"tables": arrayOf("string", "Schema-qualified tables to enrich; omit for all tables"),
+			"kinds":  arrayOf("string", "Restrict to logical_name | semantic_type | description; omit for all"),
+		}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
 			"tables": arrayOf("string", "Optional tables to restrict the search"),
@@ -977,6 +981,15 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return s.cat().QualityGate(), nil
 		}
 		return s.cat().QualityReport(), nil
+	case "suggest_semantic_metadata":
+		var a struct {
+			Tables []string `json:"tables"`
+			Kinds  []string `json:"kinds"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SuggestSemanticMetadata(a.Tables, a.Kinds), nil
 	case "find_filter_columns":
 		var a struct {
 			Values []string `json:"values"`

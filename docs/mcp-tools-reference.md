@@ -18,6 +18,7 @@
 | ⑥ 환류 | `record_feedback`, `review_feedback`, `learn_from_feedback` |
 | 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `suggest_join_relations`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog`, `profile_metadata_assets` |
 | 메타데이터 수집 | `list_metadata_sources`, `discover_metadata`, `run_metadata_sync`, `get_sync_status`, `diff_metadata_snapshots`, `profile_metadata_assets` → [metadata-sync.md](metadata-sync.md) |
+| 메타데이터 품질·보강 | `get_metadata_quality` → [metadata-quality.md](metadata-quality.md), `suggest_semantic_metadata` → [metadata-enrich.md](metadata-enrich.md) |
 
 ---
 

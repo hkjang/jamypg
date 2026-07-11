@@ -54,6 +54,16 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.cat().QualityReport())
 	})
+	mux.HandleFunc("POST /api/metadata/suggest", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Tables []string `json:"tables"`
+			Kinds  []string `json:"kinds"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		writeJSON(w, http.StatusOK, s.cat().SuggestSemanticMetadata(req.Tables, req.Kinds))
+	})
 	mux.HandleFunc("GET /api/datasets", func(w http.ResponseWriter, _ *http.Request) {
 		storage := "file"
 		if s.datasetsInDB() {
