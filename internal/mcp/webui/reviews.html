@@ -86,6 +86,7 @@
     <input id="fReviewer" placeholder="검토자 이름" style="width:130px">
     <button class="btn" id="reload">새로고침</button>
     <button class="btn" id="showSnippet">승인 스니펫 보기</button>
+    <button class="btn primary" id="applyNow">승인분 반영 + 리로드</button>
   </div>
 
   <div class="card">
@@ -233,6 +234,17 @@ $('fTables').addEventListener('keydown', function(e){ if(e.key==='Enter') load()
 $('bulkApprove').onclick = function(){ bulk('approved'); };
 $('bulkReject').onclick = function(){ bulk('rejected'); };
 $('showSnippet').onclick = showSnippet;
+$('applyNow').onclick = function(){
+  if(!confirm('승인된 후보를 데이터셋 파일에 병합하고 카탈로그를 리로드합니다.\n각 파일은 자동 백업됩니다. 진행할까요?')) return;
+  fetch('/api/reviews/apply', {method:'POST', headers:headers(true)})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){
+      var d = res.d||{};
+      if(!res.ok || d.error){ flash(false, d.error||'실패'); return; }
+      flash(true, (d.applied||0)+'건 반영'+(d.reloaded?' · 리로드 완료':'')+(d.reload_error?' · 리로드 실패':''));
+      load();
+    }).catch(function(e){ flash(false,e.message); });
+};
 $('hideSnippet').onclick = function(){ $('snippetCard').style.display='none'; };
 $('copySnippet').onclick = function(){ navigator.clipboard.writeText($('snippet').textContent).then(function(){ flash(true,'복사됨'); }); };
 function toggleAll(chk){ $('rows').querySelectorAll('.rsel').forEach(function(c){ c.checked=chk; }); }

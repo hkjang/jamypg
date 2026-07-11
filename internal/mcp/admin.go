@@ -98,6 +98,14 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/reviews/apply", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, s.cat().ApprovedOverrides())
 	})
+	mux.HandleFunc("POST /api/reviews/apply", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		res, _ := s.applyApprovedCandidates()
+		s.adminAudit(r, "reviews.apply", s.reviewerFromRequest(r), nil)
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("POST /api/reviews/decide", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return

@@ -48,6 +48,7 @@ type ReviewRecord struct {
 	Reviewer   string   `json:"reviewer,omitempty"`
 	Notes      string   `json:"notes,omitempty"`
 	DecidedAt  string   `json:"decided_at"`
+	AppliedAt  string   `json:"applied_at,omitempty"` // set once written to dataset files
 }
 
 func (c *Catalog) reviewsPath() string {

@@ -483,6 +483,7 @@ func (s *Server) tools() []map[string]any {
 			"reviewer":  str("Who is making the decision (name or id)"),
 		}, []string{"decisions"})),
 		tool("get_approved_overrides", "Return all approved metadata candidates compiled into paste-ready fragments grouped by destination file: overrides.json columns[], metrics.json entries, relations.json entries, and code-dictionary bindings. Apply these and reload/restart to make the approved candidates live.", objectSchema(map[string]any{}, nil)),
+		tool("apply_approved_candidates", "ONE-CLICK APPLY: merge every approved-but-not-yet-applied candidate into the dataset files (overrides.json columns[], metrics.json, topology_relations.json, meta_code_dict.json) with automatic per-file backups, then hot-reload the catalog. Idempotent — applied records are stamped applied_at and skipped on re-run; merges also dedupe against file content, and existing operator-curated values are never overwritten. Approval remains the explicit human gate; this is the second explicit act that makes approved metadata live.", objectSchema(map[string]any{}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
 			"tables": arrayOf("string", "Optional tables to restrict the search"),
@@ -554,12 +555,14 @@ func annotateTools(list []map[string]any) []map[string]any {
 		destructive bool
 		idempotent  bool
 	}{
-		"put_dataset":         {destructive: true, idempotent: false}, // overwrites a dataset
-		"remove_dataset":      {destructive: true, idempotent: false}, // deletes a dataset
-		"reload_catalog":      {destructive: false, idempotent: true}, // recompiles from disk
-		"learn_from_feedback": {destructive: false, idempotent: true},
-		"record_feedback":     {destructive: false, idempotent: false}, // appends a queue record
-		"review_feedback":     {destructive: false, idempotent: false}, // changes review state/audit time
+		"put_dataset":               {destructive: true, idempotent: false}, // overwrites a dataset
+		"remove_dataset":            {destructive: true, idempotent: false}, // deletes a dataset
+		"reload_catalog":            {destructive: false, idempotent: true}, // recompiles from disk
+		"learn_from_feedback":       {destructive: false, idempotent: true},
+		"record_feedback":           {destructive: false, idempotent: false}, // appends a queue record
+		"review_feedback":           {destructive: false, idempotent: false}, // changes review state/audit time
+		"decide_candidates":         {destructive: false, idempotent: false}, // persists review decisions
+		"apply_approved_candidates": {destructive: true, idempotent: true},   // merges into dataset files (backed up)
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -584,11 +587,13 @@ func annotateTools(list []map[string]any) []map[string]any {
 // datasets, learned rules) and therefore require the admin role when auth is
 // enabled — the same rule the REST endpoints enforce via requireAdmin.
 var adminOnlyTools = map[string]bool{
-	"put_dataset":         true,
-	"remove_dataset":      true,
-	"reload_catalog":      true,
-	"learn_from_feedback": true,
-	"review_feedback":     true,
+	"put_dataset":               true,
+	"remove_dataset":            true,
+	"reload_catalog":            true,
+	"learn_from_feedback":       true,
+	"review_feedback":           true,
+	"decide_candidates":         true,
+	"apply_approved_candidates": true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -1051,6 +1056,8 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		return s.cat().DecideCandidates(a.Decisions, reviewer, time.Now()), nil
 	case "get_approved_overrides":
 		return s.cat().ApprovedOverrides(), nil
+	case "apply_approved_candidates":
+		return s.applyApprovedCandidates()
 	case "find_filter_columns":
 		var a struct {
 			Values []string `json:"values"`
@@ -1312,6 +1319,27 @@ func (s *Server) removeDataset(name string) (map[string]any, error) {
 		"loaded": cat.Summary(),
 		"status": "catalog hot-swapped; restore by re-uploading via put_dataset or copying the backup back",
 	}, nil
+}
+
+// applyApprovedCandidates merges approved review decisions into the dataset
+// files and hot-reloads the catalog so they take effect immediately.
+func (s *Server) applyApprovedCandidates() (map[string]any, error) {
+	cat := s.cat()
+	res := cat.ApplyApproved(cat.DataDir, time.Now())
+	if errMsg, _ := res["error"].(string); errMsg != "" {
+		return res, nil // structured failure with backup paths — not a transport error
+	}
+	if applied, _ := res["applied"].(int); applied == 0 {
+		return res, nil // nothing written; skip the reload
+	}
+	reload, err := s.reloadCatalog()
+	if err != nil {
+		res["reload_error"] = err.Error()
+		res["note"] = "파일 병합은 완료됐지만 카탈로그 리로드가 실패했습니다. 이전 카탈로그가 유지 중이니 원인 수정 후 reload_catalog를 호출하세요."
+		return res, nil
+	}
+	res["reloaded"] = reload
+	return res, nil
 }
 
 func (s *Server) reloadCatalog() (map[string]any, error) {

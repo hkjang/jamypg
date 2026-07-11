@@ -56,18 +56,42 @@ curl -s -X POST http://127.0.0.1:9797/api/reviews/decide \
 
 `reviewer`를 생략하면 인증 사용자명(→ `X-Reviewer` 헤더 → `admin`) 순으로 결정된다.
 
-### 승인분 적용 스니펫
+### 승인분 적용 스니펫 (수동 반영)
 
 ```sh
 curl -s "http://127.0.0.1:9797/api/reviews/apply"
 # → { overrides_columns:[…], metrics:[…], relations:[…], code_dicts:[…], counts:{…} }
 ```
 
+### 원클릭 반영 (자동 병합 + 리로드, 관리자)
+
+승인분을 데이터셋 파일에 직접 병합하고 카탈로그를 핫리로드한다. 각 파일은
+반영 전 자동 백업된다.
+
+```sh
+curl -s -X POST http://127.0.0.1:9797/api/reviews/apply
+# → { "applied":3, "written":{"overrides.json":2,"meta_code_dict.json":1},
+#     "backups":[…], "reloaded":{…} }
+```
+
+- 병합 대상: `overrides.json`(columns[]), `metrics.json`,
+  `topology_relations.json`, `meta_code_dict.json`
+- **멱등**: 반영된 결정은 `applied_at`이 찍혀 재실행 시 건너뛰고, 병합 시
+  파일 내용과도 중복 제거한다.
+- **운영자 수기 값 보호**: overrides.json에 이미 채워진 필드는 후보로 덮어쓰지
+  않는다(사람 큐레이션 우선).
+- 관리 UI의 **승인분 반영 + 리로드** 버튼, MCP `apply_approved_candidates`도
+  동일 동작.
+
+승인이 사람의 명시적 게이트이고, 반영은 그 뒤의 두 번째 명시적 행위이므로
+"자동 미반영" 원칙과 충돌하지 않는다.
+
 ## MCP 도구
 
 - `review_candidates{tables?, kinds?, status?}` — 검토 큐 조회
 - `decide_candidates{decisions:[{id, decision, notes?}], reviewer?}` — 승인/반려
 - `get_approved_overrides` — 승인분 적용 스니펫
+- `apply_approved_candidates` — 승인분을 데이터셋 파일에 병합 + 리로드(원클릭)
 
 LLM 클라이언트가 후보를 다듬어 제시하고, 담당자가 승인하는 협업 흐름을 그대로
 도구로 노출한다.
