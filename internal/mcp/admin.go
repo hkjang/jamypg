@@ -32,6 +32,7 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin", s.guardPage(s.serveWebUI("webui/admin.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/editor", s.guardPage(s.serveWebUI("webui/editor.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/db", s.guardPage(s.serveWebUI("webui/db.html", "text/html; charset=utf-8")))
+	mux.HandleFunc("GET /admin/reviews", s.guardPage(s.serveWebUI("webui/reviews.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/users", s.guardAdminPage(s.serveWebUI("webui/users.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/keys", s.guardPage(s.serveWebUI("webui/keys.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/settings", s.guardAdminPage(s.serveWebUI("webui/settings.html", "text/html; charset=utf-8")))
@@ -82,6 +83,39 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, s.cat().AnalyzeImpact(table, column))
+	})
+	mux.HandleFunc("GET /api/reviews", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		var tables, kinds []string
+		if v := q.Get("tables"); v != "" {
+			tables = splitCSV(v)
+		}
+		if v := q.Get("kinds"); v != "" {
+			kinds = splitCSV(v)
+		}
+		writeJSON(w, http.StatusOK, s.cat().ReviewCandidates(tables, kinds, q.Get("status")))
+	})
+	mux.HandleFunc("GET /api/reviews/apply", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, s.cat().ApprovedOverrides())
+	})
+	mux.HandleFunc("POST /api/reviews/decide", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		var req struct {
+			Decisions []catalog.DecideCandidate `json:"decisions"`
+			Reviewer  string                    `json:"reviewer"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		reviewer := req.Reviewer
+		if reviewer == "" {
+			reviewer = s.reviewerFromRequest(r)
+		}
+		res := s.cat().DecideCandidates(req.Decisions, reviewer, time.Now())
+		s.adminAudit(r, "reviews.decide", reviewer, nil)
+		writeJSON(w, http.StatusOK, res)
 	})
 	mux.HandleFunc("GET /api/datasets", func(w http.ResponseWriter, _ *http.Request) {
 		storage := "file"
@@ -220,6 +254,30 @@ func (s *Server) applyDatasetBytes(d catalog.DatasetInfo, dataDir string, conten
 	}
 	res["action"] = action
 	return res, nil
+}
+
+// reviewerFromRequest resolves who is recording a candidate decision: the
+// authenticated user when auth is on, else the X-Reviewer header, else "admin".
+func (s *Server) reviewerFromRequest(r *http.Request) string {
+	if s.authEnabled() {
+		if u, err := s.authenticate(r); err == nil && u != nil && u.Username != "" {
+			return u.Username
+		}
+	}
+	if h := strings.TrimSpace(r.Header.Get("X-Reviewer")); h != "" {
+		return h
+	}
+	return "admin"
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {

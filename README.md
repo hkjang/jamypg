@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(40종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(43종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -373,6 +373,9 @@ Invoke-RestMethod `
 - `suggest_semantic_metadata` — 논리명·의미타입·설명이 없는 컬럼에 대해 규칙 기반(용어집·동일컬럼 재사용·약어 확장·이름/타입 패턴, 오프라인)으로 **검토 후보**를 근거·신뢰도와 함께 생성. 고신뢰 항목은 overrides.json columns[] 스니펫으로 반환. 운영 카탈로그에 자동 반영하지 않으며 LLM/담당자가 다듬어 승인
 - `suggest_model_candidates` — 규칙 기반 **모델 후보** 생성: 코드사전(저카디널리티 코드 컬럼의 프로파일 top-value로 스켈레톤), 지표(AMOUNT/COUNT/RATIO/SCORE 컬럼→SUM/AVG 집계 지표), 관계(식별자 이름+PK명/테이블명 매칭+타입 호환으로 FK 추론). 근거·신뢰도 동반, 운영 카탈로그 자동 미반영
 - `analyze_impact` — 테이블/컬럼 변경·폐기 전 **계보/영향도** 추적: 해당 자산에 의존하는 지표·관계·선호/금지 조인·골든셋·오버라이드·용어집·1홉 하위 테이블을 역추적하고 impact_level(지표/선호조인 의존 시 high) 산출. 카탈로그 읽기 전용 분석
+- `review_candidates` — 의미보강·모델 후보를 저장된 승인/반려 결정과 조인해 **검토 큐**로 조회(상태 pending/approved/rejected 필터). 각 항목에 안정적 id 부여. 사람 개입 게이트
+- `decide_candidates` — 후보를 id로 **승인/반려**. 검토자·시각·메모와 함께 영속 저장(`<data>/reviews/decisions.json`). 카탈로그 자동 미반영
+- `get_approved_overrides` — 승인된 후보를 목적 파일별(overrides.json columns[], metrics.json, relations.json, 코드사전) **적용 스니펫**으로 컴파일
 - `run_evaluation` — golden query set 평가(테이블/컬럼/지표/조인/SQL 유효성 정확도, 평균 응답시간)
 - `learn_from_feedback` — 반복 실패 패턴을 learned rule로 승격: 동일 검증오류 반복(예방 경고), 테이블 오선택 교정(검색 패널티), 컬럼 교정(validate_sql 경고). `learned_rules.json`에 영속화되어 운영자가 검토/수정 가능
 

@@ -473,6 +473,16 @@ func (s *Server) tools() []map[string]any {
 			"table":  str("Schema-qualified table to analyze (schema.table)"),
 			"column": str("Optional single column to scope the analysis to"),
 		}, []string{"table"})),
+		tool("review_candidates", "List the metadata candidate review queue: every enrichment (logical name/semantic type/description) and model candidate (code dictionary/metric/relation) joined with its stored approve/reject decision. Each item has a stable id you pass to decide_candidates. Filter by status pending|approved|rejected. This is the human-in-the-loop gate — candidates are only ever applied after approval.", objectSchema(map[string]any{
+			"tables": arrayOf("string", "Restrict to these schema-qualified tables; omit for all"),
+			"kinds":  arrayOf("string", "Restrict to logical_name|semantic_type|description|code_dict|metric|relation; omit for all"),
+			"status": str("Filter to pending | approved | rejected; omit for all"),
+		}, nil)),
+		tool("decide_candidates", "Approve or reject metadata candidates by their review-queue id (from review_candidates). Decisions are persisted with reviewer + timestamp + notes. Approved items compile into a paste-ready overrides/metrics/relations snippet (get_approved_overrides) — nothing is applied to the operational catalog automatically. Use this to record a human/operator review decision.", objectSchema(map[string]any{
+			"decisions": arrayOfObjects("Each: {id, decision: approved|rejected, notes?}"),
+			"reviewer":  str("Who is making the decision (name or id)"),
+		}, []string{"decisions"})),
+		tool("get_approved_overrides", "Return all approved metadata candidates compiled into paste-ready fragments grouped by destination file: overrides.json columns[], metrics.json entries, relations.json entries, and code-dictionary bindings. Apply these and reload/restart to make the approved candidates live.", objectSchema(map[string]any{}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
 			"tables": arrayOf("string", "Optional tables to restrict the search"),
@@ -1016,6 +1026,31 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.cat().AnalyzeImpact(a.Table, a.Column), nil
+	case "review_candidates":
+		var a struct {
+			Tables []string `json:"tables"`
+			Kinds  []string `json:"kinds"`
+			Status string   `json:"status"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().ReviewCandidates(a.Tables, a.Kinds, a.Status), nil
+	case "decide_candidates":
+		var a struct {
+			Decisions []catalog.DecideCandidate `json:"decisions"`
+			Reviewer  string                    `json:"reviewer"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		reviewer := a.Reviewer
+		if reviewer == "" {
+			reviewer = "mcp"
+		}
+		return s.cat().DecideCandidates(a.Decisions, reviewer, time.Now()), nil
+	case "get_approved_overrides":
+		return s.cat().ApprovedOverrides(), nil
 	case "find_filter_columns":
 		var a struct {
 			Values []string `json:"values"`
@@ -1684,6 +1719,10 @@ func boolSchema(description string) map[string]any {
 
 func arrayOf(itemType, description string) map[string]any {
 	return map[string]any{"type": "array", "description": description, "items": map[string]any{"type": itemType}}
+}
+
+func arrayOfObjects(description string) map[string]any {
+	return map[string]any{"type": "array", "description": description, "items": map[string]any{"type": "object"}}
 }
 
 func decodeArgs(raw json.RawMessage, dst any) error {

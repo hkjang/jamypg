@@ -25,6 +25,7 @@
       { key: 'datasets', href: '/admin',         icon: '🗂', label: '데이터셋',  show: 'always' },
       { key: 'editor',   href: '/admin/editor',  icon: '✏️', label: '테이블 편집', show: 'always' },
       { key: 'db',       href: '/admin/db',      icon: '🔌', label: 'DB · 쿼리',  show: 'always' },
+      { key: 'reviews',  href: '/admin/reviews', icon: '🧾', label: '메타 검토',  show: 'always' },
     ]},
     { title: '관리', items: [
       { key: 'users',    href: '/admin/users',    icon: '👥', label: '사용자',   show: 'admin' },
