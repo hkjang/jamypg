@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(38종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(39종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -371,6 +371,7 @@ Invoke-RestMethod `
 - `get_catalog_health` — 메타 컴파일 검증 결과(오류/경고), 커버리지 갭, PII 목록
 - `get_metadata_quality` — 테이블별 메타데이터 품질 점수(완전성·일관성·관계성·프로파일링·지표연결·사용성·보안성) 0–100 + 등급 A–E, 스키마/도메인 집계, 개선 대상. `gate=true`면 릴리스 차단 조건(로드 오류·지표/인증조인 손상·PII 미분류·품질 하한 미달) 평가로 전환
 - `suggest_semantic_metadata` — 논리명·의미타입·설명이 없는 컬럼에 대해 규칙 기반(용어집·동일컬럼 재사용·약어 확장·이름/타입 패턴, 오프라인)으로 **검토 후보**를 근거·신뢰도와 함께 생성. 고신뢰 항목은 overrides.json columns[] 스니펫으로 반환. 운영 카탈로그에 자동 반영하지 않으며 LLM/담당자가 다듬어 승인
+- `suggest_model_candidates` — 규칙 기반 **모델 후보** 생성: 코드사전(저카디널리티 코드 컬럼의 프로파일 top-value로 스켈레톤), 지표(AMOUNT/COUNT/RATIO/SCORE 컬럼→SUM/AVG 집계 지표), 관계(식별자 이름+PK명/테이블명 매칭+타입 호환으로 FK 추론). 근거·신뢰도 동반, 운영 카탈로그 자동 미반영
 - `run_evaluation` — golden query set 평가(테이블/컬럼/지표/조인/SQL 유효성 정확도, 평균 응답시간)
 - `learn_from_feedback` — 반복 실패 패턴을 learned rule로 승격: 동일 검증오류 반복(예방 경고), 테이블 오선택 교정(검색 패널티), 컬럼 교정(validate_sql 경고). `learned_rules.json`에 영속화되어 운영자가 검토/수정 가능
 

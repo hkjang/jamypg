@@ -465,6 +465,10 @@ func (s *Server) tools() []map[string]any {
 			"tables": arrayOf("string", "Schema-qualified tables to enrich; omit for all tables"),
 			"kinds":  arrayOf("string", "Restrict to logical_name | semantic_type | description; omit for all"),
 		}, nil)),
+		tool("suggest_model_candidates", "Generate REVIEWABLE code-dictionary, metric, and relation candidates. Rule-based and offline: code dictionaries seeded from profiled top values of low-cardinality code columns; aggregate metrics (SUM/AVG) for AMOUNT/COUNT/RATIO/SCORE columns not already covered; foreign-key relations inferred from identifier naming + PK-name/table-name match + type compatibility. Each candidate carries evidence + confidence and is NEVER applied to the operational catalog — an operator or LLM confirms labels, expressions, and cardinality first.", objectSchema(map[string]any{
+			"tables": arrayOf("string", "Schema-qualified tables to analyze; omit for all tables"),
+			"kinds":  arrayOf("string", "Restrict to code_dict | metric | relation; omit for all"),
+		}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
 			"tables": arrayOf("string", "Optional tables to restrict the search"),
@@ -990,6 +994,15 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.cat().SuggestSemanticMetadata(a.Tables, a.Kinds), nil
+	case "suggest_model_candidates":
+		var a struct {
+			Tables []string `json:"tables"`
+			Kinds  []string `json:"kinds"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().SuggestModelCandidates(a.Tables, a.Kinds), nil
 	case "find_filter_columns":
 		var a struct {
 			Values []string `json:"values"`
