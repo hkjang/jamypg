@@ -551,13 +551,17 @@ def emit_dataset(schema, ko_title, tables, rels, seed, golden):
         "pii_columns": [f"{schema}.{t}.{c[0]}" for t, _, _, cols in tables for c in cols if c[7]],
         "tables": [{"table": f"{schema}.{t}", "domain": ko_title, "row_count": len(seed[t])} for t, _, _, _ in tables],
     }
+    routing = {"schemas": [schema], "tags": [f"oss:{schema}"], "priority": 10}
     profiles = [
         {"id": f"pg-{schema}", "name": f"PostgreSQL {schema}", "type": "postgres",
-         "connect_string": "127.0.0.1:55432/jamypg_meta", "username": "jamypg_ro", "password_ref": "plain:jamypg_ro_pw"},
+         "connect_string": "127.0.0.1:55432/jamypg_meta", "username": "jamypg_ro", "password_ref": "plain:jamypg_ro_pw",
+         "routing": routing},
         {"id": f"mysql-{schema}", "name": f"MySQL {schema}", "type": "mysql",
-         "connect_string": f"127.0.0.1:53306/{schema}", "username": "jamypg_ro", "password_ref": "plain:jamypg_ro_pw"},
+         "connect_string": f"127.0.0.1:53306/{schema}", "username": "jamypg_ro", "password_ref": "plain:jamypg_ro_pw",
+         "routing": routing},
         {"id": f"mariadb-{schema}", "name": f"MariaDB {schema}", "type": "mariadb",
-         "connect_string": f"127.0.0.1:53307/{schema}", "username": "jamypg_ro", "password_ref": "plain:jamypg_ro_pw"},
+         "connect_string": f"127.0.0.1:53307/{schema}", "username": "jamypg_ro", "password_ref": "plain:jamypg_ro_pw",
+         "routing": routing},
     ]
     def w(name, obj):
         with open(os.path.join(d, name), "w", encoding="utf-8") as f:

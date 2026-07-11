@@ -12,7 +12,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(29종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(30종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -354,7 +354,8 @@ Invoke-RestMethod `
 - `validate_sql` — 정적 검증: 미존재 테이블/컬럼, 조인 그래프, 카티션, GROUP BY, 방언(postgres/mysql/mariadb — Oracle 전용 문법 차단, 교차 방언 함수 경고), 날짜 타입, PII, 지표식 일치, **코드사전 값 검증**(존재하지 않는 코드 리터럴 차단), **결과 스키마 검증**(`expected_outputs`로 요구 차원/지표 누락 감지), CTE/인라인뷰 스코프 인식, 구조화된 `fix_hints`(최대 2회 자동수정 루프용)
 - `explain_sql` — 리스크 추정: 정적 분석 + `profile` 지정 시 **실측 EXPLAIN**(postgres `EXPLAIN (FORMAT JSON)`, mysql/mariadb `EXPLAIN FORMAT=JSON`) — full scan/카티션/대량 정렬/고비용 탐지, 개선 제안
 - `list_db_profiles` — 호출자가 사용할 수 있는 DB 연결 프로파일 id와 마스킹된 접속·정책 정보를 반환
-- `run_sql_safely` — 검증 후 **실제 DB 실행** (`profile` 지정 시; postgres/mysql/mariadb, read-only 세션, 타임아웃·행 제한·truncated·감사 로그). 프로파일 미지정 시 dry-run 가드. 검증 실패 SQL은 실행하지 않음
+- `route_db_profile` — 프로파일이 많을 때 SQL이 참조하는 테이블을 방언 파서로 추출해 각 프로파일의 실측 인벤토리(information_schema)·선언 스키마·방언·헬스·우선순위로 점수화하여 실행 대상 프로파일을 판정. 명확한 승자가 있으면 `decisive=true`로 `selected_profile`을, 애매하면 후보 목록을 반환. `run_sql_safely(profile="auto")`가 내부적으로 사용
+- `run_sql_safely` — 검증 후 **실제 DB 실행** (`profile` 지정 시; postgres/mysql/mariadb, read-only 세션, 타임아웃·행 제한·truncated·감사 로그). `profile="auto"`면 router가 대상 프로파일을 판정(애매하면 `profile_choice_required`로 재질문). 프로파일 미지정 시 dry-run 가드. 검증 실패 SQL은 실행하지 않음
 - `record_feedback` — 질문/분석/후보/SQL/검증오류/채택여부/실행시간을 서버가 부여한 actor/session/dataset 범위와 함께 `pending/untrusted` 검토 큐에 저장; 승인 전에는 검색·프롬프트·학습에 사용하지 않음
 - `review_feedback` — **관리자 전용** 피드백 검토 큐 조회 및 approve/reject; 승인된 레코드만 trusted 상태로 few-shot·검색 부스트·학습 룰에 사용
 - `list_datasets` / `get_dataset` — 서버가 참조하는 모든 JSON 데이터셋의 라이브 레지스트리: 용도, 스키마, 사용 도구, 필수/편집가능 여부, 현재 상태(존재·크기·로드 건수·로드 이슈)와 내용 샘플

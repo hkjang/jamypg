@@ -154,11 +154,11 @@ func restoreMySQLExpression(expr ast.ExprNode, stripQualifier bool) (string, err
 }
 
 type mysqlColumnVisitor struct {
-	allowed       map[string]struct{}
-	columns       map[string]struct{}
+	allowed        map[string]struct{}
+	columns        map[string]struct{}
 	rejectSubquery bool
-	occ           *policyTableOccurrence
-	err           error
+	occ            *policyTableOccurrence
+	err            error
 }
 
 func (v *mysqlColumnVisitor) Enter(n ast.Node) (ast.Node, bool) {

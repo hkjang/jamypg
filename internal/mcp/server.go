@@ -399,6 +399,9 @@ func (s *Server) tools() []map[string]any {
 			"profile": str("DB profile id for a live EXPLAIN PLAN; omit for static-only"),
 		}, []string{"sql"})),
 		tool("list_db_profiles", "List the DB DB connection profiles the caller may use (id, name, masked connect target, pool/policy, driver availability). Call this to discover which profile id to pass to run_sql_safely / explain_sql / run_evaluation. In auth mode only profiles you own, were granted, or that are shared are returned; admins see all.", objectSchema(map[string]any{}, nil)),
+		tool("route_db_profile", "Given a SQL statement, pick the DB profile that can actually serve it when many profiles are registered. Extracts the referenced tables via the dialect parser and scores each usable profile on live table inventory (does the DB really contain those tables), operator-declared routing.schemas, engine dialect, circuit-breaker health, and routing priority/default. Returns selected_profile with decisive=true when there is one clear winner, otherwise decisive=false with ranked candidates to choose from. run_sql_safely(profile=\"auto\") calls this internally.", objectSchema(map[string]any{
+			"sql": str("SQL whose target profile should be resolved"),
+		}, []string{"sql"})),
 		tool("run_sql_safely", "Validate SQL and, when a db profile is given, execute it read-only against the target DB (postgres/mysql/mariadb) with query timeout, row limit (+truncated flag), PII value masking, a 60s identical-query result cache (cached:true), and audit logging. Before executing it runs a live EXPLAIN plan-approval gate: if the estimated plan risk meets the profile threshold it returns status=plan_approval_required with the plan instead of running — narrow the query, or (only after user approval) re-call with approve_plan=true. Zero rows / NULL-heavy output come back with result_diagnosis hints. Without a profile it stays a dry-run guard returning bounded SQL. Catalog-invalid SQL is never executed.", objectSchema(map[string]any{
 			"sql":             str("SQL to validate/execute"),
 			"limit":           integer("Row limit (capped by the profile's max_rows)"),
@@ -543,9 +546,10 @@ var adminOnlyTools = map[string]bool{
 // open-world annotation, it ensures standalone HTTP applies the same master
 // token gate to every such tool. Calls without a profile are catalog-only.
 var dbProfileTools = map[string]bool{
-	"run_sql_safely": true,
-	"explain_sql":    true,
-	"run_evaluation": true,
+	"run_sql_safely":   true,
+	"explain_sql":      true,
+	"run_evaluation":   true,
+	"route_db_profile": true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -564,9 +568,13 @@ func (s *Server) authorizeDBProfileTool(ctx context.Context, name string, argume
 	if err := decodeArgs(arguments, &a); err != nil {
 		return nil, err
 	}
+	// route_db_profile and run_sql_safely(profile="auto") probe every usable
+	// profile's live inventory, so they always touch the DB regardless of an
+	// explicit profile value.
+	probesAll := name == "route_db_profile" || (name == "run_sql_safely" && strings.EqualFold(strings.TrimSpace(a.Profile), "auto"))
 	// Retrieval-only evaluation never opens a DB, even if a client happens to
 	// include a profile value.
-	if a.Profile == "" || (name == "run_evaluation" && a.Retrieval) {
+	if !probesAll && (a.Profile == "" || (name == "run_evaluation" && a.Retrieval)) {
 		return nil, nil
 	}
 	if s.authEnabled() || s.toolActorIsAdmin(ctx) {
@@ -725,6 +733,18 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		return res, nil
 	case "list_db_profiles":
 		return s.mcpListProfiles(ctx), nil
+	case "route_db_profile":
+		var a struct {
+			SQL string `json:"sql"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		dec, err := s.routeProfile(ctx, a.SQL)
+		if err != nil {
+			return map[string]any{"error": err.Error()}, nil
+		}
+		return routeResult(dec), nil
 	case "run_sql_safely":
 		var a struct {
 			SQL            string `json:"sql"`
@@ -736,6 +756,21 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		}
 		if err := decodeArgs(req.Arguments, &a); err != nil {
 			return nil, err
+		}
+		// profile="auto" → resolve via the router; execute only when decisive,
+		// otherwise hand back candidates for an explicit choice (never guess).
+		if strings.EqualFold(strings.TrimSpace(a.Profile), "auto") {
+			dec, err := s.routeProfile(ctx, a.SQL)
+			if err != nil {
+				return map[string]any{"status": "routing_failed", "error": err.Error()}, nil
+			}
+			if !dec.Decisive {
+				out := routeResult(dec)
+				out["status"] = "profile_choice_required"
+				out["notice"] = "여러 프로파일이 이 쿼리를 처리할 수 있어 자동 선택하지 않았습니다. candidates 중 하나의 profile_id를 사용자와 확정한 뒤 run_sql_safely(profile=<id>)로 다시 호출하세요."
+				return out, nil
+			}
+			a.Profile = dec.Selected
 		}
 		if ids := s.pendingClarifications(ctx); len(ids) > 0 && a.Profile != "" {
 			return map[string]any{

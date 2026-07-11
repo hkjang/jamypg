@@ -10,10 +10,10 @@ import (
 // compiled with the target database grammar; AllowedColumns must contain the
 // columns that the condition is allowed to reference.
 type PredicatePolicy struct {
-	PolicyID      string
-	Schema        string
-	Table         string
-	Condition     string
+	PolicyID       string
+	Schema         string
+	Table          string
+	Condition      string
 	AllowedColumns []string
 }
 
@@ -50,14 +50,14 @@ type CompiledPredicatePolicy struct {
 // occurrence in one SELECT query block. QueryBlock is one-based and stable for
 // a single parse. Alias distinguishes self joins and alias shadowing.
 type PredicateMatch struct {
-	PolicyID  string `json:"policy_id,omitempty"`
+	PolicyID   string `json:"policy_id,omitempty"`
 	QueryBlock int    `json:"query_block"`
-	Schema    string `json:"schema,omitempty"`
-	Table     string `json:"table"`
-	Alias     string `json:"alias,omitempty"`
-	Condition string `json:"condition"`
-	Matched   bool   `json:"matched"`
-	Reason    string `json:"reason"`
+	Schema     string `json:"schema,omitempty"`
+	Table      string `json:"table"`
+	Alias      string `json:"alias,omitempty"`
+	Condition  string `json:"condition"`
+	Matched    bool   `json:"matched"`
+	Reason     string `json:"reason"`
 }
 
 // PredicateReport contains one decision per policy/table occurrence. Missing
@@ -163,9 +163,9 @@ func CompilePredicatePolicy(dialect string, p PredicatePolicy) (*CompiledPredica
 		return nil, fmt.Errorf("predicate policy %q: %w", p.PolicyID, err)
 	}
 	return &CompiledPredicatePolicy{
-		PolicyID: p.PolicyID,
-		Schema:   schema,
-		Table:    table,
+		PolicyID:  p.PolicyID,
+		Schema:    schema,
+		Table:     table,
 		Condition: c,
 	}, nil
 }
@@ -227,12 +227,12 @@ func MatchRequiredPredicates(dialect, sqlText string, policies []*CompiledPredic
 }
 
 type policyTableOccurrence struct {
-	queryBlock int
-	schema     string
-	table      string
-	alias      string
+	queryBlock  int
+	schema      string
+	table       string
+	alias       string
 	sourceCount int
-	where      any
+	where       any
 }
 
 func normalizePolicyTable(schema, table string) (string, string) {

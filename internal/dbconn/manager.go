@@ -99,6 +99,7 @@ func (m *Manager) Invalidate(profileID string) {
 		delete(m.pools, profileID)
 	}
 	delete(m.brk, profileID)
+	m.invalidateInventory(profileID)
 }
 
 // Close shuts down every pool (GO-RUN-008 graceful shutdown).
@@ -109,6 +110,7 @@ func (m *Manager) Close() {
 		_ = p.db.Close()
 		delete(m.pools, id)
 	}
+	m.invalidateInventory("")
 }
 
 func profileSignature(p Profile) string {
@@ -792,6 +794,7 @@ func (m *Manager) SetProfileStore(store ProfileStore) {
 		_ = p.db.Close()
 		delete(m.pools, id)
 	}
+	m.invalidateInventory("")
 	m.store = store
 	m.mu.Unlock()
 }

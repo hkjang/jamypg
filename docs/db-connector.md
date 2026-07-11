@@ -62,48 +62,92 @@ docker run -d -p 9797:9797 -v jamypg-data:/app/data/metadb \
   `plan_gate`(기본 `true`)가 켜져 있으면 실행 전 실측 EXPLAIN을 수행해
   위험도가 `plan_gate_risk`(`low`|`medium`|`high`, 기본 `high`) 이상이면
   실행을 거부합니다 — 아래 [실행계획 승인 게이트](#실행계획-승인-게이트-plan-gate) 참조
+- **routing**: 다중 프로파일 자동 라우팅 메타데이터
+  (`schemas`/`tags`/`priority`/`default`/`discover`) —
+  아래 [프로파일 라우팅](#프로파일-라우팅-여러-프로파일-자동-선택) 참조
 - 프로파일 저장 시 이전 파일이 자동 백업되고 해당 커넥션 풀이 재생성됩니다.
   기본값: 생략한 풀/정책 값은 표의 권장값으로 채워집니다
 
-## 다중 프로파일 자동 라우팅 (DB Profile Routing)
+## 프로파일 라우팅 (여러 프로파일 자동 선택)
 
-사용자 질문 및 생성된 SQL에 대해 등록된 여러 DB 프로파일 중 **가장 적절한 대상 DB를 실시간으로 스코어링하여 자동 선택**하는 기능입니다.
+프로파일이 여러 개 등록되면 "이 SQL은 어느 DB로 보내야 하나"가 문제가
+됩니다. 라우터는 SQL에서 **참조 테이블을 방언 AST 파서로 추출**한 뒤
+(postgres는 `go-pgquery`, mysql/mariadb는 TiDB 파서 — SQL 가드와 동일
+파서라 주석/문자열/특수 인용부호로 속일 수 없고, CTE 이름은 물리 테이블이
+아니므로 제외), 호출자가 사용 가능한(권한 필터 통과) 프로파일들을 5가지
+시그널로 스코어링합니다 (`internal/dbconn/router.go`, `tables.go`):
+
+| # | 시그널 | 점수 |
+| --- | --- | --- |
+| 1 | **Live capability** — 대상 DB의 `information_schema.tables` 인벤토리에 참조 테이블이 실존하는지 검증. **최강 시그널** | 전체 존재 +50 / 일부 +15 / 없음 −40 |
+| 2 | **Declared scope** — 참조 스키마가 `routing.schemas` 선언과 일치하는지. DB가 일시 다운이어도 동작 | 전체 선언 +30 / 일부 +10 / 불일치 −20 |
+| 3 | **방언** — 테이블 추출은 방언 파서로 수행. 라우팅에 방언이 지정되면 프로파일 `type` 불일치는 후보에서 **하드 배제** (MCP/REST 경로는 방언 미지정 — postgres → mysql 순으로 파싱을 시도하고 성공한 방언을 응답 `dialect`로 표시) | 하드 배제 |
+| 4 | **헬스** — 서킷 브레이커 오픈 프로파일 | 후보에서 **하드 배제** |
+| 5 | **운영자 선호** — `routing.default` / `routing.priority` | default +8 / priority 1~100 → 최대 +9.9 tie-breaker |
+
+- **인벤토리 캐시**: 프로파일별 live 인벤토리는 **10분 TTL**로 캐시되고
+  프로파일 정의가 변경되면 무효화됩니다. 시스템 스키마(pg_catalog,
+  information_schema, mysql, performance_schema, sys)는 제외.
+  인벤토리 조회 실패는 배제가 아니라 `reasons`에 사유만 기록됩니다
+- **결정 정책**: 1위 후보가 **확실한 커버리지(`full` 또는 `declared`)** 를
+  갖고, **2위와 10점 이상 차이**가 나거나 커버리지 등급에서 앞설 때만
+  자동 선택(`decisive: true`)합니다. 동점이거나 검증 불충분이면
+  `decisive: false`와 순위별 `candidates`(개별 `reasons` 포함)를 반환해
+  호출자(LLM → 사용자)가 명시적으로 지정하게 합니다 — 모호 테이블
+  재질문 룰과 동일하게 **절대 임의 추측하지 않습니다**. 테이블을
+  참조하지 않는 SQL(`SELECT 1` 등)은 적격 프로파일이 정확히 1개일
+  때만 자동 선택됩니다
 
 ### 프로파일별 라우팅 설정 (`routing` 객체)
 
-`db_profiles.json` 내의 각 프로파일 정의에 `routing` 필드를 추가하여 세부 정책을 설정할 수 있습니다.
+`db_profiles.json`의 각 프로파일에 `routing` 필드를 추가합니다:
 
 ```json
 {
   "id": "pg-prod-01",
-  ...
-  "routing": {
-    "schemas": ["dw_history", "dw_snapshot"],
-    "tags": ["env:prod", "replica"],
-    "priority": 10,
-    "default": false,
-    "discover": true
-  }
+  "name": "운영 PostgreSQL",
+  "type": "postgres",
+  "connect_string": "db.example.com:5432/appdb",
+  "username": "app_readonly",
+  "password_ref": "env:PG_PROD_PW",
+  "routing": { "schemas": ["sales"], "tags": ["prod"], "priority": 10, "default": false }
 }
 ```
 
-* **schemas** (`[]string`): 이 프로파일이 담당하도록 선언된 스키마 목록입니다. 대상 DB가 일시적으로 오프라인 상태여도 이 선언 정보를 바탕으로 안정적인 라우팅 매칭이 가능합니다.
-* **tags** (`[]string`): 프로파일에 부여하는 임의의 라벨 목록입니다. 복수 후보 매칭 시 휴리스틱 판단 및 사용자 Disambiguation 용도로 제공됩니다.
-* **priority** (`int`): 우선순위 점수입니다 (1 = 최우선, 100 = 최하위, 기본값 100). 다른 조건이 동일할 때 우선 선택을 결정하는 tie-breaker 역할을 합니다.
-* **default** (`bool`): 스키마나 테이블 정보만으로 대상을 좁힐 수 없을 때Fallback으로 선택할 기본 프로파일 여부입니다.
-* **discover** (`bool`): `true`(기본값)인 경우, 커넥션 풀을 통해 실제 대상 DB의 `information_schema.tables` 목록을 주기적으로 수집(10분 TTL 캐시)하여 SQL에 명시된 테이블이 물리적으로 존재하는지 live verification을 수행합니다. 느리거나 비용이 큰 대상의 경우 `false`로 꺼서 Declared 스키마 기반 매칭만 적용할 수 있습니다.
+- **schemas** (`[]string`): 이 프로파일이 담당하도록 선언된 스키마 목록.
+  대상 DB가 일시적으로 접속 불가여도 이 선언만으로 매칭됩니다
+- **tags** (`[]string`): 임의 라벨(`env:prod`, `replica`, `team-a` ...).
+  점수에는 반영되지 않고, 후보 목록에 표면화되어 사람/LLM의 선택을 돕습니다
+- **priority** (`int`): 1 = 최우선, 100 = 최하위(기본값). 다른 조건이
+  비슷할 때의 tie-breaker
+- **default** (`bool`): capability 시그널로 후보를 가르지 못할 때 선호할
+  fallback 프로파일 표시
+- **discover** (`bool`, 기본 `true`): live `information_schema` 인벤토리
+  프로빙 여부. 느리거나 비용이 큰 대상은 `false`로 꺼서 declared
+  `schemas` 기반 매칭만 사용할 수 있습니다
 
-### 라우팅 점수 산출 및 결정 정책
+### 호출 경로
 
-라우터는 다음 5가지 시그널을 계산하여 후보 프로파일들의 최종 점수를 매깁니다.
+```text
+MCP:  route_db_profile {sql}            — 라우팅 판단만 반환
+MCP:  run_sql_safely {sql, profile:"auto"} — 라우팅 + (decisive면) 실행
+REST: POST /api/query/route {sql}
+```
 
-1. **엔진 방언 필터**: SQL 파싱에 성공한 방언(PostgreSQL, MySQL 등)과 프로파일의 `type`이 일치하지 않으면 후보에서 배제합니다.
-2. **장애 배제**: 최근 연속 오류로 서킷 브레이커가 오픈된 프로파일은 후보에서 자동 배제합니다.
-3. **Declared Scope 점수**: SQL에 명시된 모든 스키마가 `routing.schemas` 선언 범위와 일치하면 점수 가중치를 부여합니다.
-4. **Live Capability 점수** (`discover` 활성 시): 대상 DB의 테이블 인벤토리에 SQL 내 물리 테이블들이 모두 존재하는지 실시간(캐시)으로 검증하여, 완벽히 매치되는 경우 가장 높은 가중치를 부여합니다.
-5. **운영자 선호도 점수**: `routing.default` 및 `routing.priority` 가중치 점수를 합산합니다.
-
-**결정 정책**: 1위 후보의 점수가 압도적으로 높고 실존 여부가 확실한 단일 승자 구조일 때만 자동 실행 대상 프로파일로 선택(`decisive: true`)하며, 동점 후보가 있거나 애매한 경우 후보군 목록과 개별 매칭 이유를 함께 반환하여 사용자(또는 LLM 클라이언트)가 명시적으로 대상을 지정하도록 유도합니다.
+- **`route_db_profile`**: 응답은 `{decisive, reason, referenced_tables:
+  [{schema,name}], dialect, selected_profile(결정 시), candidates:
+  [{profile_id, name, type, score, coverage(full|partial|declared|none|
+  unknown), reasons, default, priority}], excluded}` 형태입니다
+  (REST `/api/query/route`도 동일 형태)
+- **`run_sql_safely(profile="auto")`**: 라우팅이 decisive면 선택된
+  프로파일로 그대로 실행하고, 아니면 실행하지 않고
+  `status=profile_choice_required` + `candidates`를 반환합니다 —
+  사용자와 후보 중 하나를 확정한 뒤 `profile=<id>`로 재호출하세요
+- **권한**: 두 경로 모두 사용 가능한 프로파일들의 DB를 프로빙하므로,
+  standalone HTTP에서는 다른 DB 접근 도구와 동일하게 **admin token**이
+  필요합니다. 인증(메타 DB) 모드에서는 `list_db_profiles`와 같은
+  프로파일별 권한 필터가 적용되어 **소유·grant·shared 프로파일만**
+  후보가 됩니다
 
 ## 실행 경로
 

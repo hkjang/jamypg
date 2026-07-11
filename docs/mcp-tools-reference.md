@@ -1,4 +1,4 @@
-# MCP 도구 레퍼런스 (29종)
+# MCP 도구 레퍼런스 (30종)
 
 모든 도구는 `tools/call`로 호출하며, 결과는 `content[0].text`(JSON 문자열)와
 `structuredContent`(동일 객체)로 반환됩니다. 스키마 원본은 `tools/list`가
@@ -13,7 +13,7 @@
 | ② 스키마 선택 | `retrieve_context`, `search_schema`, `search_examples`, `get_column_stats` |
 | ③ 근거 확보 | `get_metric_definition`, `get_join_paths`, `get_schema_context` |
 | ④ SQL 생성 | `build_sql_skeleton` |
-| ④ DB 선택 | `list_db_profiles` |
+| ④ DB 선택 | `list_db_profiles`, `route_db_profile` |
 | ⑤ 검증·선택 | `validate_sql`, `rank_candidates`, `explain_sql`, `run_sql_safely` |
 | ⑥ 환류 | `record_feedback`, `review_feedback`, `learn_from_feedback` |
 | 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `suggest_join_relations`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog` |
@@ -290,6 +290,29 @@ BIRTH/DTH/MTRY 제외, 골든 예제 사용 빈도로 동률 해소), PIT/삭제
 `my_permission`(owner/manage/use). 응답에 `driver_available` 포함 —
 순수 Go 드라이버(pgx, go-sql-driver/mysql)가 내장되어 항상 `true`입니다.
 
+### route_db_profile
+
+프로파일이 여러 개일 때 **주어진 SQL을 실제로 처리할 수 있는 프로파일**을
+판별합니다. SQL의 참조 테이블을 방언 AST 파서로 추출(CTE 이름 제외)한 뒤,
+사용 가능한 각 프로파일을 live 테이블 인벤토리(`information_schema`,
+10분 TTL 캐시)·선언 스키마(`routing.schemas`)·방언 일치·서킷 브레이커
+헬스·운영자 선호(`routing.priority`/`default`)로 스코어링합니다.
+
+| 파라미터 | 설명 |
+| --- | --- |
+| `sql` (필수) | 대상 프로파일을 판별할 SQL |
+
+응답: `decisive`, `reason`, `referenced_tables[]`(`{schema, name}`),
+`dialect`, `candidates[]`(`profile_id`, `name`, `type`, `score`,
+`coverage`(full/partial/declared/none/unknown), `reasons[]`, `default`,
+`priority` — 점수순), `excluded[]`(배제 후보와 사유). **단일 확실 승자일
+때만** `decisive=true` + `selected_profile`이 반환되며, 동점/검증 불충분이면
+`decisive=false` — 후보 중 하나를 사용자와 확정해 명시적으로 지정합니다
+(임의 추측 금지). `run_sql_safely(profile="auto")`가 내부에서 이 라우터를
+호출합니다. standalone HTTP에서는 admin token 필요, 인증 모드에서는
+`list_db_profiles`와 동일한 프로파일 권한 필터 적용.
+상세: [db-connector.md](db-connector.md#프로파일-라우팅-여러-프로파일-자동-선택).
+
 ### run_sql_safely
 
 검증 + (프로파일 지정 시) **대상 DB(postgres/mysql/mariadb) read-only 실행**.
@@ -297,11 +320,17 @@ BIRTH/DTH/MTRY 제외, 골든 예제 사용 빈도로 동률 해소), PIT/삭제
 | 파라미터 | 설명 |
 | --- | --- |
 | `sql` (필수) | 실행할 SQL |
-| `profile` | `db_profiles`의 프로파일 id — 생략 시 dry-run(bounded_sql 반환) |
+| `profile` | `db_profiles`의 프로파일 id — 생략 시 dry-run(bounded_sql 반환). `"auto"`면 라우터가 대상 프로파일을 자동 판별 |
 | `limit` | 행 제한 (프로파일 `max_rows`로 캡) |
 | `timeout_seconds` | 프로파일 기본보다 짧을 때만 적용 |
 
+`profile="auto"`는 `route_db_profile`과 동일한 라우터로 대상을 판별해
+**단일 확실 승자일 때만** 그 프로파일로 실행하고, 아니면 실행하지 않고
+`status=profile_choice_required` + `candidates`를 반환합니다 — 사용자와
+후보 중 하나를 확정한 뒤 `profile=<id>`로 재호출하세요.
+
 응답 `status`: `dry_run_only`(프로파일 없음) / `blocked`(카탈로그 검증 실패 —
+**실행하지 않음**) / `profile_choice_required`(auto 라우팅 비결정 —
 **실행하지 않음**) / `executed`(+`result`: 컬럼 메타, 행, row_count,
 elapsed_ms, `truncated`) / `execution_failed`(+정제된 오류: `TIMEOUT`,
 `CANCELED`, `PG-<SQLSTATE>`, `MY-<errno>` 코드와 한국어 힌트). 실행은

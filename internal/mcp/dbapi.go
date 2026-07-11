@@ -260,6 +260,27 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/query/execute", execute(false))
 	mux.HandleFunc("POST /api/query/preview", execute(true))
 
+	mux.HandleFunc("POST /api/query/route", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		_ = actor
+		var req struct {
+			SQL string `json:"sql"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		dec, err := s.routeProfile(r.Context(), req.SQL)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, routeResult(dec))
+	})
+
 	mux.HandleFunc("POST /api/query/explain", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)
 		if !ok {

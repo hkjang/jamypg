@@ -619,6 +619,62 @@ func (s *Server) mcpListProfiles(ctx context.Context) map[string]any {
 	}
 }
 
+// usableProfiles returns the raw (defaults-applied) profiles the caller is
+// permitted to use, for profile routing. Standalone mode returns all
+// db_profiles.json entries; auth mode applies owner/shared/grant checks.
+func (s *Server) usableProfiles(ctx context.Context) ([]dbconn.Profile, error) {
+	if !s.authEnabled() {
+		return dbconn.LoadProfiles(s.cat().DataDir)
+	}
+	u := userFrom(ctx)
+	recs, err := s.Meta.Store.ListProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []dbconn.Profile
+	for _, rec := range recs {
+		grants, _ := s.Meta.Store.ListGrants(ctx, rec.ID)
+		if !meta.CanUseProfile(u, *rec, grants) {
+			continue
+		}
+		var p dbconn.Profile
+		if json.Unmarshal(rec.Definition, &p) != nil {
+			continue
+		}
+		p.ID = rec.ID
+		out = append(out, dbconn.ApplyDefaults(p))
+	}
+	return out, nil
+}
+
+// routeProfile runs the profile router for a SQL string, gated by the same
+// per-profile authorization used for execution.
+func (s *Server) routeProfile(ctx context.Context, sql string) (dbconn.RouteDecision, error) {
+	profs, err := s.usableProfiles(ctx)
+	if err != nil {
+		return dbconn.RouteDecision{}, err
+	}
+	return s.DB.RouteProfile(ctx, sql, "", profs), nil
+}
+
+// routeResult renders a RouteDecision as an LLM-facing map.
+func routeResult(dec dbconn.RouteDecision) map[string]any {
+	out := map[string]any{
+		"decisive":          dec.Decisive,
+		"reason":            dec.Reason,
+		"referenced_tables": dec.Tables,
+		"dialect":           dec.Dialect,
+		"candidates":        dec.Candidates,
+	}
+	if dec.Selected != "" {
+		out["selected_profile"] = dec.Selected
+	}
+	if len(dec.Excluded) > 0 {
+		out["excluded"] = dec.Excluded
+	}
+	return out
+}
+
 // profileSummary is an LLM-friendly, secret-free view of a profile.
 func profileSummary(p dbconn.Profile, permission string) map[string]any {
 	out := map[string]any{
