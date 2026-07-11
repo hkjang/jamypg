@@ -469,6 +469,10 @@ func (s *Server) tools() []map[string]any {
 			"tables": arrayOf("string", "Schema-qualified tables to analyze; omit for all tables"),
 			"kinds":  arrayOf("string", "Restrict to code_dict | metric | relation; omit for all"),
 		}, nil)),
+		tool("analyze_impact", "Trace the dependency footprint (lineage/impact) of a table or column before changing or retiring it: which metrics, relations, preferred/forbidden joins, golden queries, overrides, glossary terms, and one-hop downstream tables depend on it. Read-only analysis over the loaded catalog; returns an impact_level (high if metrics or preferred joins would break) and the full dependent list so you can plan a safe change.", objectSchema(map[string]any{
+			"table":  str("Schema-qualified table to analyze (schema.table)"),
+			"column": str("Optional single column to scope the analysis to"),
+		}, []string{"table"})),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
 			"tables": arrayOf("string", "Optional tables to restrict the search"),
@@ -1003,6 +1007,15 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.cat().SuggestModelCandidates(a.Tables, a.Kinds), nil
+	case "analyze_impact":
+		var a struct {
+			Table  string `json:"table"`
+			Column string `json:"column"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.cat().AnalyzeImpact(a.Table, a.Column), nil
 	case "find_filter_columns":
 		var a struct {
 			Values []string `json:"values"`

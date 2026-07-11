@@ -74,6 +74,15 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.cat().SuggestModelCandidates(req.Tables, req.Kinds))
 	})
+	mux.HandleFunc("GET /api/metadata/impact", func(w http.ResponseWriter, r *http.Request) {
+		table := r.URL.Query().Get("table")
+		column := r.URL.Query().Get("column")
+		if table == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "table query parameter is required"})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.cat().AnalyzeImpact(table, column))
+	})
 	mux.HandleFunc("GET /api/datasets", func(w http.ResponseWriter, _ *http.Request) {
 		storage := "file"
 		if s.datasetsInDB() {

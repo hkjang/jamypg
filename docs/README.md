@@ -19,6 +19,7 @@ SQL(PostgreSQL·MySQL·MariaDB)로 변환하도록 돕는 **Text2SQL MCP 서버*
 | [metadata-quality.md](metadata-quality.md) | 메타데이터 품질 점수(A–E)와 릴리스 차단 게이트 |
 | [metadata-enrich.md](metadata-enrich.md) | 운영자, 데이터 관리자, LLM 통합 | 규칙 기반 의미 메타데이터 보강(Phase 5): 논리명·의미타입·설명 **검토 후보** 생성, 근거·신뢰도, overrides.json 스니펫, `suggest_semantic_metadata` |
 | [metadata-candidates.md](metadata-candidates.md) | 운영자, 데이터 관리자, LLM 통합 | 규칙 기반 모델 후보(Phase 6): 코드사전·지표·관계 **검토 후보** 생성, `suggest_model_candidates` |
+| [metadata-impact.md](metadata-impact.md) | 운영자, 데이터 관리자 | 계보/영향도 분석(Phase 7): 테이블/컬럼 변경 전 의존 지표·관계·조인·골든셋·용어집·하위 테이블 역추적, impact_level, `analyze_impact` |
 | [auth.md](auth.md) | 운영자, 보안 담당 | 인증·권한·MCP 키: Postgres 메타 DB, 로컬/Keycloak SSO 로그인, 역할·프로파일 권한, MCP 키 라이프사이클 |
 | [operations.md](operations.md) | 운영자, SRE | 배포, 모니터링, 백업/복원, 피드백 학습 루프, 트러블슈팅 |
 | [evaluation.md](evaluation.md) | QA, 운영자 | 골든셋 평가 체계, 지표 정의, CI 통합, 골든셋 확장 |
