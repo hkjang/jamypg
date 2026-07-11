@@ -15,6 +15,7 @@ SQL(PostgreSQL·MySQL·MariaDB)로 변환하도록 돕는 **Text2SQL MCP 서버*
 | [datasets.md](datasets.md) | 운영자, 데이터 관리자 | 18개 데이터셋 스키마·작성 규칙·예시 (라이브: `list_datasets`) |
 | [rest-api.md](rest-api.md) | 관리도구 개발자, 운영자 | REST 관리 API, 인증, curl 예시 (라이브: `/docs` Swagger) |
 | [db-connector.md](db-connector.md) | 운영자, DBA | DB 실행 커넥터: PostgreSQL/MySQL/MariaDB 순수 Go 드라이버, DB 프로파일, 실행 파이프라인, 장애 대응, 메트릭 |
+| [metadata-sync.md](metadata-sync.md) | 운영자, 데이터 관리자 | 자동 메타데이터 수집(Phase 1-2): 물리 자동 수집·스냅숏·구조 해시·증분 변경감지, read-only 카탈로그 접근, MCP/REST 인터페이스 |
 | [auth.md](auth.md) | 운영자, 보안 담당 | 인증·권한·MCP 키: Postgres 메타 DB, 로컬/Keycloak SSO 로그인, 역할·프로파일 권한, MCP 키 라이프사이클 |
 | [operations.md](operations.md) | 운영자, SRE | 배포, 모니터링, 백업/복원, 피드백 학습 루프, 트러블슈팅 |
 | [evaluation.md](evaluation.md) | QA, 운영자 | 골든셋 평가 체계, 지표 정의, CI 통합, 골든셋 확장 |

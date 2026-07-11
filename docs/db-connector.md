@@ -316,6 +316,17 @@ preview → execute**. 0행이면 `hint`에 따라 조건을 재확인합니다.
 
 룰은 `learned_rules.json`에서 검토·수정·삭제 가능합니다.
 
+## 자동 메타데이터 수집
+
+이 커넥터의 read-only 풀·서킷브레이커는 대상 DB의 **물리 메타데이터 자동
+수집**(스키마·테이블·컬럼·제약·인덱스 스냅숏 + 증분 변경감지)에도 그대로
+재사용됩니다. 시스템 카탈로그 조회는 사용자 SQL이 아니라 서버 내부 질의로,
+SQL 가드·플랜 게이트·소량 행 제한을 거치지 않지만 세션은 여전히 DSN으로
+read-only가 강제되고 풀·서킷브레이커·행 상한이 적용됩니다. SELECT 전용
+계정으로도 제약을 읽도록 PostgreSQL은 `pg_constraint`, MySQL/MariaDB는
+`information_schema.statistics`를 사용합니다. 자세한 내용은
+[metadata-sync.md](metadata-sync.md)를 참고하세요.
+
 ## 보안 계층 요약
 
 1. 카탈로그 검증 (미존재 식별자·PII·금지조인 차단) — 실행 전 필수

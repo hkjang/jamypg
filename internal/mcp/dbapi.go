@@ -281,6 +281,86 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, routeResult(dec))
 	})
 
+	// ---- metadata sync (FR-META-001..005) ----
+	mux.HandleFunc("GET /api/metadata/sources", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.requireQueryActor(w, r); !ok {
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpMetadataSources(r.Context()))
+	})
+	mux.HandleFunc("POST /api/metadata/discover", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Source string `json:"source"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.canUseProfileID(r.Context(), actor, req.Source); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpDiscoverMetadata(r.Context(), req.Source))
+	})
+	mux.HandleFunc("POST /api/metadata/sync", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Source       string   `json:"source"`
+			Schemas      []string `json:"schemas"`
+			Incremental  *bool    `json:"incremental"`
+			IncludeViews bool     `json:"include_views"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.canUseProfileID(r.Context(), actor, req.Source); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		incremental := req.Incremental == nil || *req.Incremental
+		writeJSON(w, http.StatusOK, s.mcpRunMetadataSync(r.Context(), req.Source, req.Schemas, incremental, req.IncludeViews))
+	})
+	mux.HandleFunc("GET /api/metadata/snapshots/{source}", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		src := r.PathValue("source")
+		if err := s.canUseProfileID(r.Context(), actor, src); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpSyncStatus(src))
+	})
+	mux.HandleFunc("POST /api/metadata/diff", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Source string `json:"source"`
+			From   string `json:"from"`
+			To     string `json:"to"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.canUseProfileID(r.Context(), actor, req.Source); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpDiffSnapshots(req.Source, req.From, req.To))
+	})
+
 	mux.HandleFunc("POST /api/query/explain", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)
 		if !ok {

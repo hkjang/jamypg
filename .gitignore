@@ -7,3 +7,4 @@ data/*/backups/
 data/*/learned_rules.json
 jamypg-mcp-linux
 jamypg-mcp-*.exe
+data/*/metasync/

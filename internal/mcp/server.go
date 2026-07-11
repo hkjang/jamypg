@@ -410,6 +410,24 @@ func (s *Server) tools() []map[string]any {
 			"fresh":           boolSchema("true → bypass the 60s result cache and hit the DB"),
 			"approve_plan":    boolSchema("true → bypass the execution-plan approval gate after a prior status=plan_approval_required response; set only with explicit user approval"),
 		}, []string{"sql"})),
+		tool("list_metadata_sources", "List DB profiles usable as automated metadata-collection sources (source_id, name, type, masked connect target). Use a source_id with discover_metadata / run_metadata_sync / diff_metadata_snapshots. Physical metadata is auto-collected; business meaning stays approval-based.", objectSchema(map[string]any{}, nil)),
+		tool("discover_metadata", "List the non-system schemas available on a metadata source database, so you can scope a sync. Read-only; queries information_schema only.", objectSchema(map[string]any{
+			"source": str("metadata source id (a db profile id from list_metadata_sources)"),
+		}, []string{"source"})),
+		tool("run_metadata_sync", "Collect the physical model (schemas, tables, views, columns, PK/FK/unique/check constraints, indexes, comments, row-count estimates) from a source DB into a versioned snapshot, and return the change set versus the previous snapshot. Incremental by default: if the schema hash is unchanged it skips without storing a redundant snapshot. Deletions are reported as retire candidates, never applied immediately. This collects PHYSICAL facts only — it never writes business meaning (logical names, metrics) into the operational catalog.", objectSchema(map[string]any{
+			"source":        str("metadata source id (db profile id)"),
+			"schemas":       arrayOf("string", "Optional schema names to scope collection; omit for all non-system schemas"),
+			"incremental":   boolSchema("true (default) → skip when the schema hash is unchanged; false → always snapshot and diff"),
+			"include_views": boolSchema("Collect views/materialized views and their SQL (default false)"),
+		}, []string{"source"})),
+		tool("get_sync_status", "List stored metadata snapshots for a source (newest first) with collection time, schema hash, and object counts. Use the snapshot ids with diff_metadata_snapshots.", objectSchema(map[string]any{
+			"source": str("metadata source id (db profile id)"),
+		}, []string{"source"})),
+		tool("diff_metadata_snapshots", "Compute the change set (table/column add/remove, type/nullability/key/comment/index/view-SQL changes, each with severity and disposition) between two stored snapshots of a source. Deletions surface as retire candidates.", objectSchema(map[string]any{
+			"source": str("metadata source id (db profile id)"),
+			"from":   str("baseline snapshot id"),
+			"to":     str("target snapshot id"),
+		}, []string{"source", "from", "to"})),
 		tool("record_feedback", "Append bounded NL2SQL feedback to the review queue. Actor/session/dataset scope and trust state are server-owned; feedback never affects prompts, retrieval, or learning until an administrator approves it with review_feedback.", objectSchema(map[string]any{
 			"question":          str("Original question"),
 			"analysis":          map[string]any{"type": "object", "description": "analyze_question output", "additionalProperties": true},
@@ -546,10 +564,12 @@ var adminOnlyTools = map[string]bool{
 // open-world annotation, it ensures standalone HTTP applies the same master
 // token gate to every such tool. Calls without a profile are catalog-only.
 var dbProfileTools = map[string]bool{
-	"run_sql_safely":   true,
-	"explain_sql":      true,
-	"run_evaluation":   true,
-	"route_db_profile": true,
+	"run_sql_safely":    true,
+	"explain_sql":       true,
+	"run_evaluation":    true,
+	"route_db_profile":  true,
+	"discover_metadata": true,
+	"run_metadata_sync": true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -563,6 +583,7 @@ func (s *Server) authorizeDBProfileTool(ctx context.Context, name string, argume
 	}
 	var a struct {
 		Profile   string `json:"profile"`
+		Source    string `json:"source"`
 		Retrieval bool   `json:"retrieval"`
 	}
 	if err := decodeArgs(arguments, &a); err != nil {
@@ -570,8 +591,11 @@ func (s *Server) authorizeDBProfileTool(ctx context.Context, name string, argume
 	}
 	// route_db_profile and run_sql_safely(profile="auto") probe every usable
 	// profile's live inventory, so they always touch the DB regardless of an
-	// explicit profile value.
-	probesAll := name == "route_db_profile" || (name == "run_sql_safely" && strings.EqualFold(strings.TrimSpace(a.Profile), "auto"))
+	// explicit profile value. The metadata-sync tools address the DB by
+	// `source` and always touch it.
+	probesAll := name == "route_db_profile" ||
+		name == "discover_metadata" || name == "run_metadata_sync" ||
+		(name == "run_sql_safely" && strings.EqualFold(strings.TrimSpace(a.Profile), "auto"))
 	// Retrieval-only evaluation never opens a DB, even if a client happens to
 	// include a profile value.
 	if !probesAll && (a.Profile == "" || (name == "run_evaluation" && a.Retrieval)) {
@@ -745,6 +769,46 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return map[string]any{"error": err.Error()}, nil
 		}
 		return routeResult(dec), nil
+	case "list_metadata_sources":
+		return s.mcpMetadataSources(ctx), nil
+	case "discover_metadata":
+		var a struct {
+			Source string `json:"source"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.mcpDiscoverMetadata(ctx, a.Source), nil
+	case "run_metadata_sync":
+		var a struct {
+			Source       string   `json:"source"`
+			Schemas      []string `json:"schemas"`
+			Incremental  *bool    `json:"incremental"`
+			IncludeViews bool     `json:"include_views"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		incremental := a.Incremental == nil || *a.Incremental
+		return s.mcpRunMetadataSync(ctx, a.Source, a.Schemas, incremental, a.IncludeViews), nil
+	case "get_sync_status":
+		var a struct {
+			Source string `json:"source"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.mcpSyncStatus(a.Source), nil
+	case "diff_metadata_snapshots":
+		var a struct {
+			Source string `json:"source"`
+			From   string `json:"from"`
+			To     string `json:"to"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.mcpDiffSnapshots(a.Source, a.From, a.To), nil
 	case "run_sql_safely":
 		var a struct {
 			SQL            string `json:"sql"`

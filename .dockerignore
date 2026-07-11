@@ -17,3 +17,4 @@ Dockerfile
 .dockerignore
 .gitignore
 README.md
+data/*/metasync/
