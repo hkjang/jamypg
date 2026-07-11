@@ -2,7 +2,10 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,12 +20,67 @@ import (
 // operator curation protected). Export pushes jamypg-owned logical names /
 // descriptions back to OpenMetadata for columns it lacks (dry-run by default).
 
-func (s *Server) omClient() (*openmetadata.Client, error) {
-	url := strings.TrimSpace(s.Options.OpenMetadataURL)
-	if url == "" {
-		return nil, errors.New("OpenMetadata is not configured; set -openmetadata-url (and -openmetadata-token) or JAMYPG_OPENMETADATA_URL/_TOKEN")
+// omConfigFile is the persisted, restart-free connection config, stored next to
+// the dataset (same posture as db_profiles.json). Runtime config from the admin
+// console takes precedence over the -openmetadata-url/-token flags/env.
+type omConfigFile struct {
+	URL   string `json:"url"`
+	Token string `json:"token,omitempty"`
+}
+
+func (s *Server) omConfigPath() string {
+	return filepath.Join(s.cat().DataDir, "openmetadata.json")
+}
+
+// omConfig resolves the effective connection: the stored file wins over the
+// flag/env Options. Returns url, token, and where it came from.
+func (s *Server) omConfig() (url, token, source string) {
+	if b, err := os.ReadFile(s.omConfigPath()); err == nil {
+		var cfg omConfigFile
+		if json.Unmarshal(b, &cfg) == nil && strings.TrimSpace(cfg.URL) != "" {
+			return strings.TrimSpace(cfg.URL), strings.TrimSpace(cfg.Token), "file"
+		}
 	}
-	return openmetadata.New(url, s.Options.OpenMetadataToken), nil
+	if u := strings.TrimSpace(s.Options.OpenMetadataURL); u != "" {
+		return u, strings.TrimSpace(s.Options.OpenMetadataToken), "flag"
+	}
+	return "", "", "unset"
+}
+
+func (s *Server) omClient() (*openmetadata.Client, error) {
+	url, token, _ := s.omConfig()
+	if url == "" {
+		return nil, errors.New("OpenMetadata is not configured; set it in /admin/openmetadata, or pass -openmetadata-url (and -openmetadata-token) / JAMYPG_OPENMETADATA_URL/_TOKEN")
+	}
+	return openmetadata.New(url, token), nil
+}
+
+// saveOMConfig persists the runtime connection config atomically. An empty URL
+// removes the file (reverting to flag/env).
+func (s *Server) saveOMConfig(url, token string) error {
+	path := s.omConfigPath()
+	url = strings.TrimSpace(url)
+	if url == "" {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	// keep the existing token when the caller submits a blank (masked) token
+	if strings.TrimSpace(token) == "" {
+		if _, tok, src := s.omConfig(); src == "file" {
+			token = tok
+		}
+	}
+	b, err := json.MarshalIndent(omConfigFile{URL: url, Token: strings.TrimSpace(token)}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // omStatus tests connectivity/auth and reports the configured target.
@@ -31,11 +89,17 @@ func (s *Server) omStatus(ctx context.Context) map[string]any {
 	if err != nil {
 		return map[string]any{"configured": false, "error": err.Error()}
 	}
+	_, token, source := s.omConfig()
+	base := map[string]any{"configured": true, "base_url": c.BaseURL, "config_source": source, "has_token": token != ""}
 	v, err := c.Version(ctx)
 	if err != nil {
-		return map[string]any{"configured": true, "base_url": c.BaseURL, "reachable": false, "error": err.Error()}
+		base["reachable"] = false
+		base["error"] = err.Error()
+		return base
 	}
-	return map[string]any{"configured": true, "base_url": c.BaseURL, "reachable": true, "server_version": v}
+	base["reachable"] = true
+	base["server_version"] = v
+	return base
 }
 
 // omImport fetches OpenMetadata metadata for a scope and proposes it. apply

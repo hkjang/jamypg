@@ -53,10 +53,15 @@
 </header>
 <main>
   <div class="card">
+    <h2>연결 설정 (무재기동 · &lt;data&gt;/openmetadata.json)</h2>
     <div class="row">
+      <label class="f">URL <input id="cfgUrl" placeholder="http://openmetadata:8585" style="width:280px"></label>
+      <label class="f">Token <input id="cfgToken" type="password" placeholder="bot JWT (비우면 유지)" style="width:220px"></label>
+      <button class="btn primary" id="cfgSave">저장 + 연결 확인</button>
       <button class="btn" id="statusBtn">연결 상태 확인</button>
-      <span class="mini" id="statusDetail"></span>
+      <span class="mini" id="cfgSource"></span>
     </div>
+    <div class="mini" id="statusDetail" style="margin-top:6px"></div>
   </div>
 
   <div class="card">
@@ -99,15 +104,33 @@ function headers(j){var h={};if(j)h['Content-Type']='application/json';var t=$('
 function flash(ok,t){var m=$('msg');m.className='msg '+(ok?'ok':'bad');m.textContent=t;setTimeout(function(){m.textContent='';},3000);}
 function raw(o){$('raw').textContent=JSON.stringify(o,null,2);}
 
+function renderStatus(d){
+  raw(d);
+  if(d.config_source) $('cfgSource').textContent='source: '+d.config_source+(d.has_token?' · 토큰 있음':' · 토큰 없음');
+  if(!d.configured){$('statusPill').innerHTML='<span class="pill bad">미설정</span>';$('statusDetail').textContent=d.error||'';return;}
+  $('target').textContent=d.base_url||'';
+  if(d.reachable){$('statusPill').innerHTML='<span class="pill ok">연결됨</span>';
+    $('statusDetail').textContent='서버 버전 '+JSON.stringify(d.server_version||{});}
+  else{$('statusPill').innerHTML='<span class="pill bad">연결 실패</span>';$('statusDetail').textContent=d.error||'';}
+}
 function status(){
-  fetch('/api/openmetadata/status',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
-    raw(d);
-    if(!d.configured){$('statusPill').innerHTML='<span class="pill bad">미설정</span>';$('statusDetail').textContent=d.error||'';return;}
-    $('target').textContent=d.base_url||'';
-    if(d.reachable){$('statusPill').innerHTML='<span class="pill ok">연결됨</span>';
-      $('statusDetail').textContent='서버 버전 '+JSON.stringify(d.server_version||{});}
-    else{$('statusPill').innerHTML='<span class="pill bad">연결 실패</span>';$('statusDetail').textContent=d.error||'';}
-  }).catch(function(e){flash(false,e.message);});
+  fetch('/api/openmetadata/status',{headers:headers()}).then(function(r){return r.json();})
+    .then(renderStatus).catch(function(e){flash(false,e.message);});
+}
+function loadConfig(){
+  fetch('/api/openmetadata/config',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+    if(d.url) $('cfgUrl').value=d.url;
+    $('cfgSource').textContent='source: '+(d.source||'')+(d.has_token?' · 토큰 있음':'');
+  }).catch(function(){});
+}
+function saveConfig(){
+  var body={url:$('cfgUrl').value.trim(),token:$('cfgToken').value};
+  fetch('/api/openmetadata/config',{method:'PUT',headers:headers(true),body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){
+      if(!res.ok||res.d.error){flash(false,(res.d&&res.d.error)||'저장 실패');return;}
+      $('cfgToken').value=''; flash(true,'저장됨'); renderStatus(res.d);
+    }).catch(function(e){flash(false,e.message);});
 }
 
 function doImport(apply){
@@ -156,11 +179,12 @@ function doExport(dry){
 }
 
 $('statusBtn').onclick=status;
+$('cfgSave').onclick=saveConfig;
 $('previewBtn').onclick=function(){doImport(false);};
 $('applyBtn').onclick=function(){doImport(true);};
 $('expPlanBtn').onclick=function(){doExport(true);};
 $('expPushBtn').onclick=function(){doExport(false);};
-JASQL.mount({page:'openmetadata',onReady:status});
+JASQL.mount({page:'openmetadata',onReady:function(){loadConfig();status();}});
 </script>
 </body>
 </html>

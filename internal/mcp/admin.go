@@ -83,6 +83,28 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/openmetadata/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.omStatus(r.Context()))
 	})
+	mux.HandleFunc("GET /api/openmetadata/config", func(w http.ResponseWriter, r *http.Request) {
+		url, token, source := s.omConfig()
+		writeJSON(w, http.StatusOK, map[string]any{"url": url, "has_token": token != "", "source": source})
+	})
+	mux.HandleFunc("PUT /api/openmetadata/config", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		var req struct {
+			URL   string `json:"url"`
+			Token string `json:"token"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		if err := s.saveOMConfig(req.URL, req.Token); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		s.adminAudit(r, "openmetadata.config", s.reviewerFromRequest(r), nil)
+		writeJSON(w, http.StatusOK, s.omStatus(r.Context()))
+	})
 	mux.HandleFunc("POST /api/openmetadata/import", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Scope           string `json:"scope"`

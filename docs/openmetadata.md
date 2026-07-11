@@ -27,6 +27,21 @@ go run ./cmd/jamypg-mcp -data ./data/metadb -addr 127.0.0.1:9797
 
 봇 토큰은 OpenMetadata의 *Settings → Bots*에서 발급합니다(예: `ingestion-bot`).
 
+### 런타임 설정 (무재기동)
+
+플래그/환경변수 대신 **관리 콘솔에서 접속 정보를 바로 설정**할 수 있습니다.
+`/admin/openmetadata`의 *연결 설정* 또는 REST로 저장하면 `<data>/openmetadata.json`
+(`0600`)에 영속되고 즉시 적용됩니다(재기동 불필요). 파일 설정이 플래그/환경변수보다
+우선합니다.
+
+```sh
+# 저장 (관리자) — token을 비우면 기존 토큰 유지, url을 비우면 설정 삭제(플래그로 복귀)
+curl -s -X PUT http://127.0.0.1:9797/api/openmetadata/config \
+  -H 'Content-Type: application/json' -d '{"url":"http://openmetadata:8585","token":"<bot-jwt>"}'
+# 조회 — 토큰은 has_token 플래그로만 노출(값 미반환)
+curl -s http://127.0.0.1:9797/api/openmetadata/config
+```
+
 ## 관리 콘솔 (curl 없이)
 
 좌측 내비 **🔗 OpenMetadata** (`/admin/openmetadata`)에서 GUI로 운영할 수 있습니다:
