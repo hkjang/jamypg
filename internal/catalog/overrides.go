@@ -151,9 +151,11 @@ type PreferredJoin struct {
 }
 
 type DefaultFilter struct {
-	Table     string `json:"table"`
-	Condition string `json:"condition"`
-	Reason    string `json:"reason,omitempty"`
+	PolicyID    string `json:"policy_id,omitempty"`
+	Table       string `json:"table"`
+	Condition   string `json:"condition"`
+	Reason      string `json:"reason,omitempty"`
+	Enforcement string `json:"enforcement,omitempty"` // warn (default) | error
 }
 
 func loadOverrides(dataDir string) (*Overrides, []LoadIssue) {
@@ -271,8 +273,17 @@ func (c *Catalog) applyOverrides() {
 		c.Adjacency[tk] = append(c.Adjacency[tk], JoinEdge{From: tk, To: fk, Relation: r, Reversed: true})
 	}
 	for _, df := range o.DefaultFilters {
+		if strings.TrimSpace(df.Condition) == "" {
+			issue("error", "default filter requires a non-empty condition", df.Table, "")
+			continue
+		}
 		if _, ok := c.ResolveTable(df.Table); !ok {
 			issue("warning", "default filter references unknown table", df.Table, "")
+		}
+		switch strings.ToLower(strings.TrimSpace(df.Enforcement)) {
+		case "", "warn", "error":
+		default:
+			issue("error", "default filter enforcement must be 'warn' or 'error'", df.Table, "")
 		}
 	}
 }

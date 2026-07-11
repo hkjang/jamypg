@@ -45,8 +45,9 @@ func TestServeStdio(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &toolsResp); err != nil {
 		t.Fatalf("unmarshal tools response: %v", err)
 	}
-	if len(toolsResp.Result.Tools) != 28 {
-		t.Fatalf("expected 28 tools, got %d", len(toolsResp.Result.Tools))
+	expectedTools := len((&Server{}).tools())
+	if len(toolsResp.Result.Tools) != expectedTools {
+		t.Fatalf("expected %d tools from registry, got %d", expectedTools, len(toolsResp.Result.Tools))
 	}
 	for _, tool := range toolsResp.Result.Tools {
 		schema, ok := tool["inputSchema"].(map[string]any)

@@ -19,15 +19,16 @@ type Catalog struct {
 	Prompts   []PromptDef
 	Databases []DatabaseDef
 
-	Glossary        *Glossary
-	Metrics         []MetricDef
-	Overrides       *Overrides
-	Issues          []LoadIssue
-	ForbiddenJoins  []ForbiddenJoin
-	FeedbackUsage   map[string]int
-	FeedbackPenalty map[string]int
-	LearnedRules    []LearnedRule
-	Patterns        []QueryPattern
+	Glossary         *Glossary
+	Metrics          []MetricDef
+	Overrides        *Overrides
+	Issues           []LoadIssue
+	ForbiddenJoins   []ForbiddenJoin
+	FeedbackUsage    map[string]int
+	FeedbackPenalty  map[string]int
+	FeedbackTenantID string
+	LearnedRules     []LearnedRule
+	Patterns         []QueryPattern
 }
 
 type Table struct {

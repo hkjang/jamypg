@@ -256,9 +256,17 @@ func (c *Catalog) ValidateSQL(req ValidateRequest) ValidationResult {
 			}
 		}
 		for _, df := range c.DefaultFiltersFor(ref.Table.FQN) {
-			key := strings.ToUpper(strings.Fields(df.Condition)[0])
-			if !strings.Contains(upper, key) {
-				addWarn("DEFAULT_FILTER_MISSING", "operator default filter is missing: "+df.Condition, ref.Table.FQN, "", df.Reason)
+			if !defaultFilterPresent(sql, df.Condition, ref) {
+				hint := "필수 predicate를 WHERE/ON/HAVING 절에 정확히 추가하세요: " + df.Condition
+				if df.Reason != "" {
+					hint += " (" + df.Reason + ")"
+				}
+				message := "operator default filter is missing or does not match exactly: " + df.Condition
+				if strings.EqualFold(strings.TrimSpace(df.Enforcement), "error") {
+					addErr("DEFAULT_FILTER_MISSING", message, ref.Table.FQN, "", hint)
+				} else {
+					addWarn("DEFAULT_FILTER_MISSING", message, ref.Table.FQN, "", hint)
+				}
 			}
 		}
 	}

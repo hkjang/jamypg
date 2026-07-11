@@ -210,30 +210,15 @@ func (c *Catalog) expandTokens(tokens []string) []string {
 	return out
 }
 
-// metricsInQuestion maps table FQN -> metric names whose name/alias literally
-// appears in the question.
+// metricsInQuestion maps table FQN -> high-confidence metric resolutions.
+// It intentionally delegates to the same resolver as LookupMetrics and
+// MetricNamesInQuestion so retrieval, context, and validation cannot disagree.
 func (c *Catalog) metricsInQuestion(question string) map[string][]string {
-	lq := strings.ToLower(question)
 	out := map[string][]string{}
-	if lq == "" {
-		return out
-	}
-	for _, m := range c.Metrics {
-		names := append([]string{m.Name, m.BusinessName}, m.Aliases...)
-		hit := false
-		for _, n := range names {
-			ln := strings.ToLower(strings.TrimSpace(n))
-			if ln != "" && strings.Contains(lq, ln) {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			continue
-		}
-		for _, tn := range m.Tables {
+	for _, match := range c.resolveMetricMatches(question) {
+		for _, tn := range match.Definition.Tables {
 			if t, ok := c.ResolveTable(tn); ok {
-				out[t.FQN] = appendUnique(out[t.FQN], m.Name)
+				out[t.FQN] = appendUnique(out[t.FQN], match.Definition.Name)
 			}
 		}
 	}

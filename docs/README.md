@@ -9,7 +9,7 @@ SQL(PostgreSQL·MySQL·MariaDB)로 변환하도록 돕는 **Text2SQL MCP 서버*
 | 문서 | 대상 | 내용 |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | 아키텍트, 개발자 | 시스템 구조, 카탈로그 컴파일 파이프라인, 핫스왑, 트랜스포트 |
-| [mcp-tools-reference.md](mcp-tools-reference.md) | MCP 클라이언트 개발자, LLM 통합 | 26개 MCP 도구 전체 레퍼런스 (파라미터·응답·사용 시점) |
+| [mcp-tools-reference.md](mcp-tools-reference.md) | MCP 클라이언트 개발자, LLM 통합 | 29개 MCP 도구 전체 레퍼런스 (파라미터·응답·사용 시점) |
 | [sql-generation-workflow.md](sql-generation-workflow.md) | LLM 통합, 프롬프트 엔지니어 | 질문→SQL 표준 워크플로 10단계와 엔드투엔드 예시 |
 | [validation-rules.md](validation-rules.md) | LLM 통합, 운영자 | validate_sql 오류/경고 코드 35종 카탈로그와 수정 방법 |
 | [datasets.md](datasets.md) | 운영자, 데이터 관리자 | 18개 데이터셋 스키마·작성 규칙·예시 (라이브: `list_datasets`) |

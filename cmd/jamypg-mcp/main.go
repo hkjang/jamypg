@@ -20,9 +20,11 @@ func main() {
 		addr           string
 		endpoint       string
 		allowOrigins   string
+		publicMCP      bool
 		stateless      bool
 		ssePost        bool
 		adminToken     string
+		feedbackTenant string
 		metaDSN        string
 		bootstrapAdmin string
 		oidcIssuer     string
@@ -35,9 +37,11 @@ func main() {
 	flag.StringVar(&addr, "addr", "127.0.0.1:9797", "HTTP listen address")
 	flag.StringVar(&endpoint, "endpoint", "/mcp", "MCP endpoint path")
 	flag.StringVar(&allowOrigins, "allow-origin", "", "Comma-separated additional allowed Origin values")
+	flag.BoolVar(&publicMCP, "public-mcp", false, "Allow standalone HTTP MCP on a non-loopback listen address (explicit security opt-in)")
 	flag.BoolVar(&stateless, "stateless", false, "Disable Mcp-Session-Id session management")
 	flag.BoolVar(&ssePost, "sse-post", false, "Return POST responses as text/event-stream instead of application/json")
 	flag.StringVar(&adminToken, "admin-token", os.Getenv("JAMYPG_ADMIN_TOKEN"), "Master token for admin access (default: JAMYPG_ADMIN_TOKEN env)")
+	flag.StringVar(&feedbackTenant, "feedback-tenant", os.Getenv("JAMYPG_FEEDBACK_TENANT"), "Server-owned feedback tenant/workspace scope (default: JAMYPG_FEEDBACK_TENANT or default)")
 	flag.StringVar(&metaDSN, "meta-db", os.Getenv("JAMYPG_META_DB"), "Postgres DSN for the meta DB; enables login/users/MCP keys/per-user profiles (default: JAMYPG_META_DB env)")
 	flag.StringVar(&bootstrapAdmin, "bootstrap-admin", os.Getenv("JAMYPG_BOOTSTRAP_ADMIN"), "Initial admin as username:password when the meta DB is empty (default: JAMYPG_BOOTSTRAP_ADMIN env; empty generates a random password logged once)")
 	flag.StringVar(&oidcIssuer, "oidc-issuer", os.Getenv("JAMYPG_OIDC_ISSUER"), "Keycloak realm issuer URL, e.g. https://kc.example.com/realms/myrealm")
@@ -45,6 +49,10 @@ func main() {
 	flag.StringVar(&oidcSecret, "oidc-client-secret", os.Getenv("JAMYPG_OIDC_CLIENT_SECRET"), "OIDC client secret")
 	flag.StringVar(&oidcRedirect, "oidc-redirect-url", os.Getenv("JAMYPG_OIDC_REDIRECT_URL"), "OIDC redirect URL, e.g. https://host:9797/auth/sso/callback")
 	flag.Parse()
+
+	if err := validateHTTPExposure(transport, addr, metaDSN, adminToken, publicMCP); err != nil {
+		log.Fatal(err)
+	}
 
 	cat, err := catalog.Load(dataDir)
 	if err != nil {
@@ -100,11 +108,12 @@ func main() {
 		log.Fatalf("unsupported transport %q: use http or stdio", transport)
 	}
 	opts := mcp.Options{
-		Endpoint:       endpoint,
-		AllowedOrigins: splitCSV(allowOrigins),
-		Stateful:       !stateless,
-		SSEPost:        ssePost,
-		AdminToken:     adminToken,
+		Endpoint:         endpoint,
+		AllowedOrigins:   splitCSV(allowOrigins),
+		Stateful:         !stateless,
+		SSEPost:          ssePost,
+		AdminToken:       adminToken,
+		FeedbackTenantID: feedbackTenant,
 	}
 	srv := mcp.NewServer(cat, opts)
 	if metaSvc != nil {

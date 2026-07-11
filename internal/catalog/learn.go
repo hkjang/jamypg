@@ -84,6 +84,10 @@ func (c *Catalog) LearnFromFeedback(minOccurrences int) (map[string]any, error) 
 	tableSwaps := map[swapKey]int{}
 	colSwaps := map[swapKey]int{} // keys are "TABLE.COLUMN"
 	scanned := 0
+	trustedScanned := 0
+	skippedUnreviewed := 0
+	duplicatesSkipped := 0
+	seenFeedback := map[string]bool{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
@@ -100,6 +104,16 @@ func (c *Catalog) LearnFromFeedback(minOccurrences int) (map[string]any, error) 
 				continue
 			}
 			scanned++
+			if !c.FeedbackEligible(rec) {
+				skippedUnreviewed++
+				continue
+			}
+			if seenFeedback[rec.Fingerprint] {
+				duplicatesSkipped++
+				continue
+			}
+			seenFeedback[rec.Fingerprint] = true
+			trustedScanned++
 			for _, k := range extractErrorKeys(rec.Errors) {
 				errCounts[errKey{k[0], k[1], k[2]}]++
 			}
@@ -200,12 +214,15 @@ func (c *Catalog) LearnFromFeedback(minOccurrences int) (map[string]any, error) 
 	}
 	c.applyLearnedRules(rules)
 	return map[string]any{
-		"rules":           rules,
-		"scanned":         scanned,
-		"promoted":        len(rules),
-		"min_occurrences": minOccurrences,
-		"path":            path,
-		"note":            "rules are hot-applied: search penalizes corrected tables, validate_sql emits LEARNED_* warnings. Edit or delete learned_rules.json to override.",
+		"rules":              rules,
+		"scanned":            scanned,
+		"trusted_scanned":    trustedScanned,
+		"skipped_unreviewed": skippedUnreviewed,
+		"duplicates_skipped": duplicatesSkipped,
+		"promoted":           len(rules),
+		"min_occurrences":    minOccurrences,
+		"path":               path,
+		"note":               "only trusted + operator-approved, in-scope feedback is learned; rules are hot-applied to search and validation.",
 	}, nil
 }
 

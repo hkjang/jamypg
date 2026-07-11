@@ -32,12 +32,16 @@ func TestClarificationResolutionFeedsUsagePrior(t *testing.T) {
 	if second["status"] != "ready" {
 		t.Fatalf("expected ready, got %v", second["status"])
 	}
-	// a corrected feedback record with tables + clarification marker must exist
+	// A corrected clarification record is useful review evidence, but user
+	// answers are not self-authenticating: it must remain pending/untrusted.
 	entries, _ := os.ReadDir(filepath.Join(dataDir, "feedback"))
 	found := false
 	for _, e := range entries {
 		b, _ := os.ReadFile(filepath.Join(dataDir, "feedback", e.Name()))
-		if strings.Contains(string(b), `"source":"clarification"`) && strings.Contains(string(b), `"outcome":"corrected"`) {
+		if strings.Contains(string(b), `"source":"clarification"`) &&
+			strings.Contains(string(b), `"outcome":"corrected"`) &&
+			strings.Contains(string(b), `"review_status":"pending"`) &&
+			strings.Contains(string(b), `"trust_status":"untrusted"`) {
 			found = true
 		}
 	}

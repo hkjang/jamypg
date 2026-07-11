@@ -144,15 +144,7 @@ func (c *Catalog) AnalyzeQuestion(req AnalyzeRequest) map[string]any {
 		Source      string      `json:"source"` // dictionary | unknown
 		Definitions []MetricDef `json:"definitions,omitempty"`
 	}
-	metricTerms := []string{}
-	for _, m := range c.Metrics {
-		for _, n := range append([]string{m.Name, m.BusinessName}, m.Aliases...) {
-			ln := strings.ToLower(strings.TrimSpace(n))
-			if ln != "" && strings.Contains(q, ln) {
-				metricTerms = appendUnique(metricTerms, m.Name)
-			}
-		}
-	}
+	metricTerms := c.MetricNamesInQuestion(req.Question)
 	metrics := []metricAnalysis{}
 	for _, term := range metricTerms {
 		metrics = append(metrics, metricAnalysis{Term: term, Source: "dictionary", Definitions: c.LookupMetrics(term)})

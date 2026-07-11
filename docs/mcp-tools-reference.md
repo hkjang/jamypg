@@ -1,4 +1,4 @@
-# MCP 도구 레퍼런스 (26종)
+# MCP 도구 레퍼런스 (29종)
 
 모든 도구는 `tools/call`로 호출하며, 결과는 `content[0].text`(JSON 문자열)와
 `structuredContent`(동일 객체)로 반환됩니다. 스키마 원본은 `tools/list`가
@@ -8,18 +8,34 @@
 
 | 단계 | 도구 |
 | --- | --- |
+| ⓪ 권장 진입점 | `prepare_sql_context` |
 | ① 질문 이해 | `analyze_question`, `resolve_time`, `find_filter_columns` |
-| ② 스키마 선택 | `search_schema`, `search_examples`, `get_column_stats` |
+| ② 스키마 선택 | `retrieve_context`, `search_schema`, `search_examples`, `get_column_stats` |
 | ③ 근거 확보 | `get_metric_definition`, `get_join_paths`, `get_schema_context` |
 | ④ SQL 생성 | `build_sql_skeleton` |
 | ④ DB 선택 | `list_db_profiles` |
 | ⑤ 검증·선택 | `validate_sql`, `rank_candidates`, `explain_sql`, `run_sql_safely` |
-| ⑥ 환류 | `record_feedback`, `learn_from_feedback` |
-| 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog` |
+| ⑥ 환류 | `record_feedback`, `review_feedback`, `learn_from_feedback` |
+| 운영 | `get_catalog_health`, `run_evaluation`, `suggest_joins`, `suggest_join_relations`, `list_datasets`, `get_dataset`, `put_dataset`, `remove_dataset`, `reload_catalog` |
 
 ---
 
 ## ① 질문 이해
+
+### prepare_sql_context
+
+대부분의 질문에서 가장 먼저 호출하는 one-call 파이프라인입니다. 질문 분석,
+GraphRAG 검색, 지표 정의, 압축 스키마, 조인 경로, SQL skeleton을 하나의
+근거 bundle로 반환합니다. `status=needs_clarification`이면 SQL을 만들지 말고
+`clarifications[]`에 답한 뒤 같은 도구를 다시 호출합니다.
+
+| 파라미터 | 설명 |
+| --- | --- |
+| `question` (필수) | 현재 자연어 질문 |
+| `tables` | 운영자/사용자가 확정한 테이블 제한 |
+| `clarifications` | 이전 응답의 ambiguity id별 답변 |
+| `previous_question`, `previous_sql` | 후속 질문 문맥 |
+| `limit` | 생성 skeleton의 행 제한 |
 
 ### analyze_question
 
@@ -81,6 +97,14 @@ score}` — 예: `"연체"` → `DLQ_MATRL_TP_CD = '21'`.
 
 ## ② 스키마 선택
 
+### retrieve_context
+
+`search_schema` seed 순서를 보존하면서 join graph 1-hop 이웃과 최대 2개의
+발견 후보를 확장합니다. 각 후보는 semantic/lexical/proximity/joinability/
+value evidence/usage prior/freshness 신호와 선정 근거, 조인 경로를 함께
+반환합니다. `prepare_sql_context`가 내부에서 사용하며, 테이블 선정 이유를
+감사할 때 직접 호출합니다.
+
 ### search_schema
 
 다중 신호 스코어링으로 테이블/컬럼 후보를 반환합니다.
@@ -129,7 +153,9 @@ top values·포맷 패턴·최신성 + 골든 예제 사용 횟수.
 
 ### get_metric_definition
 
-**지표 사전 우선** 조회. 응답의 `source`로 신뢰도를 구분합니다.
+**지표 사전 우선** 조회. exact name/business name/alias를 우선하고 glossary
+동의어와 보수적인 토큰 커버리지·근접도를 결합합니다. 응답의 `source`,
+`confidence_threshold`, `match_evidence[]`로 신뢰도와 선정 근거를 확인합니다.
 
 | 파라미터 | 설명 |
 | --- | --- |
@@ -288,13 +314,27 @@ elapsed_ms, `truncated`) / `execution_failed`(+정제된 오류: `TIMEOUT`,
 
 ### record_feedback
 
-결과를 JSONL로 적재합니다. 성공/교정 SQL은 재기동 시 few-shot 예제와 검색
-부스트로 재사용됩니다.
+결과를 검토 큐 JSONL로 적재합니다. actor/session/dataset/tenant와 trust
+필드는 서버가 강제로 부여하며, 새 레코드는 항상 `pending/untrusted`입니다.
+관리자가 승인하기 전에는 few-shot, 검색 prior, 학습 룰에 사용되지 않습니다.
 
 주요 필드: `question`(필수), `outcome`(필수: success/failure/corrected/
 rejected), `analysis`, `tables[]`, `columns[]`, `generated_sql`,
 `validation_errors`, `final_sql`, `executed`, `adopted`, `duration_ms`,
 `result_rows`, `failure_cause`, `notes`.
+
+### review_feedback
+
+관리자 전용 신뢰 경계입니다. `feedback_id`를 생략하면 현재 dataset/tenant의
+pending 큐를 조회하고, id와 `decision=approve|reject`를 전달하면 승인 또는
+거절합니다. 승인된 레코드만 trusted 상태로 즉시 카탈로그에 반영됩니다.
+
+| 파라미터 | 설명 |
+| --- | --- |
+| `feedback_id` | 검토 대상 id; 생략하면 큐 조회 |
+| `decision` | `approve` 또는 `reject` |
+| `notes` | 관리자 검토 메모 |
+| `limit` | 큐 조회 개수(기본 50, 최대 200) |
 
 ### learn_from_feedback
 
@@ -330,6 +370,12 @@ semantic type 미지정 날짜형 컬럼 수, PII 컬럼 목록, 사전 크기, 
 근거(FK/인덱스/타입/동시출현)와 함께 제안합니다. `suggested_override`는
 overrides.json `preferred_joins`에 붙여넣는 스니펫이며 **자동 적용되지
 않습니다**. confidence는 0.85로 캡(운영자 수작업 0.95보다 낮음).
+
+### suggest_join_relations
+
+골든셋의 expected table 쌍 가운데 join graph 경로가 없는 경우를 찾아 공통
+key-like 컬럼, 타입, PK/FK 근거로 `topology_relations.json` 후보를 만듭니다.
+제안은 자동 적용되지 않으며 운영자가 검토한 뒤 dataset 편집기로 반영합니다.
 
 ### list_datasets / get_dataset / put_dataset / remove_dataset / reload_catalog
 

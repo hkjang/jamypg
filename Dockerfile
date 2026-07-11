@@ -23,4 +23,4 @@ EXPOSE 9797
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD wget -qO- http://127.0.0.1:9797/healthz >/dev/null 2>&1 || exit 1
 ENTRYPOINT ["jamypg-mcp"]
-CMD ["-transport", "http", "-addr", "0.0.0.0:9797", "-data", "/app/data/metadb"]
+CMD ["-transport", "http", "-addr", "0.0.0.0:9797", "-public-mcp", "-data", "/app/data/metadb"]

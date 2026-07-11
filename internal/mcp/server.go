@@ -27,16 +27,17 @@ import (
 
 const ProtocolVersion = "2025-06-18"
 
-// Version is the JASQL server version, surfaced in serverInfo, /auth/me, and
+// Version is the JAMYPG server version, surfaced in serverInfo, /auth/me, and
 // the web UI (sidebar footer).
-const Version = "0.14.1"
+const Version = "0.2.0"
 
 type Options struct {
-	Endpoint       string
-	AllowedOrigins []string
-	Stateful       bool
-	SSEPost        bool
-	AdminToken     string // when set, mutating /api/* endpoints require it
+	Endpoint         string
+	AllowedOrigins   []string
+	Stateful         bool
+	SSEPost          bool
+	AdminToken       string // when set, mutating /api/* endpoints require it
+	FeedbackTenantID string // server-owned workspace/tenant scope for feedback
 }
 
 type Server struct {
@@ -55,9 +56,10 @@ type Server struct {
 	// prepare_sql_context sets them when it withholds the skeleton and clears
 	// them once the (re-)call succeeds; run_sql_safely refuses to execute
 	// while any remain, closing the "ignore the question and run anyway" hole.
-	pendingClar map[string][]string
-	queryCache  *resultCache // TTL result cache for repeated identical queries
-	asyncJobs   *asyncJobStore
+	pendingClar     map[string][]string
+	queryCache      *resultCache // TTL result cache for repeated identical queries
+	asyncJobs       *asyncJobStore
+	feedbackLimiter *feedbackRateLimiter
 }
 
 // cat returns the current catalog; dataset tools swap it atomically so
@@ -67,6 +69,9 @@ func (s *Server) cat() *catalog.Catalog {
 }
 
 func (s *Server) setCatalog(c *catalog.Catalog) {
+	if c != nil {
+		c.SetFeedbackTenant(s.Options.FeedbackTenantID)
+	}
 	s.catalogPtr.Store(c)
 }
 
@@ -94,14 +99,18 @@ func NewServer(c *catalog.Catalog, opts Options) *Server {
 	if opts.Endpoint == "" {
 		opts.Endpoint = "/mcp"
 	}
+	if strings.TrimSpace(opts.FeedbackTenantID) == "" {
+		opts.FeedbackTenantID = "default"
+	}
 	s := &Server{
-		Options:     opts,
-		DB:          dbconn.NewManager(c.DataDir),
-		sessions:    map[string]time.Time{},
-		events:      map[string]uint64{},
-		pendingClar: map[string][]string{},
-		queryCache:  newResultCache(),
-		asyncJobs:   newAsyncJobStore(),
+		Options:         opts,
+		DB:              dbconn.NewManager(c.DataDir),
+		sessions:        map[string]time.Time{},
+		events:          map[string]uint64{},
+		pendingClar:     map[string][]string{},
+		queryCache:      newResultCache(),
+		asyncJobs:       newAsyncJobStore(),
+		feedbackLimiter: newFeedbackRateLimiter(feedbackDefaultLimit, feedbackDefaultWindow),
 	}
 	s.setCatalog(c)
 	return s
@@ -398,7 +407,7 @@ func (s *Server) tools() []map[string]any {
 			"fresh":           boolSchema("true → bypass the 60s result cache and hit the DB"),
 			"approve_plan":    boolSchema("true → bypass the execution-plan approval gate after a prior status=plan_approval_required response; set only with explicit user approval"),
 		}, []string{"sql"})),
-		tool("record_feedback", "Append NL2SQL feedback as JSONL. Successful/adopted SQL is reused for few-shot examples and search boosting on next reload.", objectSchema(map[string]any{
+		tool("record_feedback", "Append bounded NL2SQL feedback to the review queue. Actor/session/dataset scope and trust state are server-owned; feedback never affects prompts, retrieval, or learning until an administrator approves it with review_feedback.", objectSchema(map[string]any{
 			"question":          str("Original question"),
 			"analysis":          map[string]any{"type": "object", "description": "analyze_question output", "additionalProperties": true},
 			"tables":            arrayOf("string", "Candidate/used tables"),
@@ -414,6 +423,12 @@ func (s *Server) tools() []map[string]any {
 			"failure_cause":     str("Failure cause classification"),
 			"notes":             str("Manual correction memo"),
 		}, []string{"question", "outcome"})),
+		tool("review_feedback", "ADMIN: list pending feedback, or approve/reject one record. Approval is the only path that marks feedback trusted and eligible for few-shot reuse, retrieval priors, and learn_from_feedback.", objectSchema(map[string]any{
+			"feedback_id": str("Feedback id to review; omit to list the pending queue"),
+			"decision":    str("approve or reject; required with feedback_id"),
+			"notes":       str("Optional administrator review note"),
+			"limit":       integer("Queue page size when feedback_id is omitted (default 50, max 200)"),
+		}, nil)),
 		tool("get_catalog_health", "Return catalog compilation status: load/validation issues, metadata coverage gaps, PII columns, and dictionary sizes.", objectSchema(map[string]any{}, nil)),
 		tool("find_filter_columns", "Map literal values from the question (e.g. 서울, 정상, 개인사업자) onto filter columns via code dictionaries, top values, and sample values, with suggested predicates.", objectSchema(map[string]any{
 			"values": arrayOf("string", "Literal values or labels mentioned in the question"),
@@ -430,7 +445,7 @@ func (s *Server) tools() []map[string]any {
 			"profile":     str("Optional db profile id for execution-based checks (postgres/mysql/mariadb)"),
 			"retrieval":   boolSchema("true → retrieval-stage-only recall metrics (no SQL/execution checks)"),
 		}, nil)),
-		tool("learn_from_feedback", "Promote repeated failure patterns into learned rules from BOTH feedback records and the DB execution audit: recurring validation errors, table/column corrections, repeatedly slow tables (>=5s), and recurring execution errors (ORA/TIMEOUT per table). Persists learned_rules.json and hot-applies (search penalties + LEARNED_* validation warnings).", objectSchema(map[string]any{
+		tool("learn_from_feedback", "ADMIN: promote repeated patterns from trusted, operator-approved, in-scope feedback plus the DB execution audit. Pending/untrusted/foreign-scope and duplicate feedback is skipped. Persists learned_rules.json and hot-applies search penalties and LEARNED_* validation warnings.", objectSchema(map[string]any{
 			"min_occurrences": integer("Minimum repetitions before a pattern becomes a rule (default 3)"),
 		}, nil)),
 		tool("prepare_sql_context", "★ ONE-CALL PIPELINE: runs analyze_question → search_schema → get_metric_definition → get_schema_context → get_join_paths → build_sql_skeleton in a single call and returns one bundle (analysis, selected_tables, metrics, schema_context, join_paths, skeleton, expected_output_columns, next_step). Start HERE for most questions, then just fill the skeleton's /* SLOT */ markers, call validate_sql, and optionally run_sql_safely. Saves orchestrating 6+ calls and prevents skipping a step.", objectSchema(map[string]any{
@@ -481,15 +496,17 @@ func (s *Server) tools() []map[string]any {
 // exceptions are the DB-touching tools (openWorldHint) and the operator tools
 // that mutate catalog/feedback state (not read-only).
 func annotateTools(list []map[string]any) []map[string]any {
-	// tools that reach an external DB DB (still read-only SELECTs)
-	dbTouching := map[string]bool{"run_sql_safely": true, "explain_sql": true, "run_evaluation": true}
 	// operator tools that mutate server-side state (not read-only)
-	writers := map[string]struct{ destructive bool }{
-		"put_dataset":         {destructive: true},  // overwrites a dataset
-		"remove_dataset":      {destructive: true},  // deletes a dataset
-		"reload_catalog":      {destructive: false}, // recompiles from disk
-		"learn_from_feedback": {destructive: false},
-		"record_feedback":     {destructive: false},
+	writers := map[string]struct {
+		destructive bool
+		idempotent  bool
+	}{
+		"put_dataset":         {destructive: true, idempotent: false}, // overwrites a dataset
+		"remove_dataset":      {destructive: true, idempotent: false}, // deletes a dataset
+		"reload_catalog":      {destructive: false, idempotent: true}, // recompiles from disk
+		"learn_from_feedback": {destructive: false, idempotent: true},
+		"record_feedback":     {destructive: false, idempotent: false}, // appends a queue record
+		"review_feedback":     {destructive: false, idempotent: false}, // changes review state/audit time
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -497,13 +514,13 @@ func annotateTools(list []map[string]any) []map[string]any {
 		if w, ok := writers[name]; ok {
 			ann["readOnlyHint"] = false
 			ann["destructiveHint"] = w.destructive
-			ann["idempotentHint"] = !w.destructive
+			ann["idempotentHint"] = w.idempotent
 			ann["openWorldHint"] = false
 		} else {
 			ann["readOnlyHint"] = true
 			ann["destructiveHint"] = false
 			ann["idempotentHint"] = true
-			ann["openWorldHint"] = dbTouching[name]
+			ann["openWorldHint"] = dbProfileTools[name]
 		}
 		t["annotations"] = ann
 	}
@@ -518,6 +535,48 @@ var adminOnlyTools = map[string]bool{
 	"remove_dataset":      true,
 	"reload_catalog":      true,
 	"learn_from_feedback": true,
+	"review_feedback":     true,
+}
+
+// dbProfileTools is the single registry for MCP tools that can reach an
+// external DB when their profile argument is set. Besides driving the MCP
+// open-world annotation, it ensures standalone HTTP applies the same master
+// token gate to every such tool. Calls without a profile are catalog-only.
+var dbProfileTools = map[string]bool{
+	"run_sql_safely": true,
+	"explain_sql":    true,
+	"run_evaluation": true,
+}
+
+// authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
+// toolActorIsAdmin deliberately preserves the established transport policy:
+// a configured standalone HTTP request carries ctxKeyHTTPAdmin and must pass
+// the token, while stdio and standalone HTTP with no configured token remain
+// locally trusted. Meta mode proceeds to its existing per-profile ACL checks.
+func (s *Server) authorizeDBProfileTool(ctx context.Context, name string, arguments json.RawMessage) (map[string]any, error) {
+	if !dbProfileTools[name] {
+		return nil, nil
+	}
+	var a struct {
+		Profile   string `json:"profile"`
+		Retrieval bool   `json:"retrieval"`
+	}
+	if err := decodeArgs(arguments, &a); err != nil {
+		return nil, err
+	}
+	// Retrieval-only evaluation never opens a DB, even if a client happens to
+	// include a profile value.
+	if a.Profile == "" || (name == "run_evaluation" && a.Retrieval) {
+		return nil, nil
+	}
+	if s.authEnabled() || s.toolActorIsAdmin(ctx) {
+		return nil, nil
+	}
+	return map[string]any{
+		"status": "forbidden",
+		"error":  "tool '" + name + "' access to a db profile requires the admin token",
+		"notice": "pass the master admin token (X-Admin-Token or Authorization: Bearer <token>).",
+	}, nil
 }
 
 func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, error) {
@@ -537,6 +596,11 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			"status": "forbidden",
 			"error":  "tool '" + req.Name + "' requires admin privileges",
 		}, nil
+	}
+	if denied, err := s.authorizeDBProfileTool(ctx, req.Name, req.Arguments); err != nil {
+		return nil, err
+	} else if denied != nil {
+		return denied, nil
 	}
 	switch req.Name {
 	case "analyze_question":
@@ -685,16 +749,6 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		// receive catalog-validation service (or its error detail) for a
 		// profile-scoped execution request.
 		if a.Profile != "" {
-			// Standalone mode only: executing real SQL over HTTP requires the
-			// master token. In auth mode authorization is the per-profile
-			// check below (owner / shared / use·manage grant / admin).
-			if !s.authEnabled() && !s.toolActorIsAdmin(ctx) {
-				return map[string]any{
-					"status": "forbidden",
-					"error":  "executing SQL against a db profile requires the admin token",
-					"notice": "pass the master admin token (X-Admin-Token).",
-				}, nil
-			}
 			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
 				return map[string]any{
 					"status": "forbidden",
@@ -776,7 +830,18 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		if err := decodeArgs(req.Arguments, &a); err != nil {
 			return nil, err
 		}
-		return s.recordFeedback(a)
+		return s.recordFeedback(ctx, a, "client")
+	case "review_feedback":
+		var a struct {
+			FeedbackID string `json:"feedback_id"`
+			Decision   string `json:"decision"`
+			Notes      string `json:"notes"`
+			Limit      int    `json:"limit"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.reviewFeedback(ctx, a.FeedbackID, a.Decision, a.Notes, a.Limit)
 	case "get_catalog_health":
 		return s.cat().Health(), nil
 	case "find_filter_columns":
@@ -853,7 +918,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 					"question": a.Question, "tables": sel, "outcome": "corrected",
 					"source": "clarification", "clarifications": a.Clarifications,
 				}
-				if _, err := s.recordFeedback(fb); err != nil {
+				if _, err := s.recordFeedback(ctx, fb, "clarification"); err != nil {
 					log.Printf("clarification feedback record failed: %v", err)
 				}
 			}
@@ -1139,30 +1204,6 @@ func nullIfEmpty(s string) string {
 		return "null"
 	}
 	return s
-}
-
-func (s *Server) recordFeedback(data map[string]any) (map[string]any, error) {
-	dir := filepath.Join(s.cat().DataDir, "feedback")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	id := time.Now().UTC().Format("20060102T150405.000000000Z")
-	data["id"] = id
-	data["recorded_at"] = time.Now().Format(time.RFC3339)
-	path := filepath.Join(dir, "feedback-"+time.Now().Format("20060102")+".jsonl")
-	b, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	if _, err := f.Write(append(b, '\n')); err != nil {
-		return nil, err
-	}
-	return map[string]any{"feedback_id": id, "path": path}, nil
 }
 
 func (s *Server) resources() []map[string]any {

@@ -16,18 +16,26 @@ func buildFeedbackFixture(t *testing.T, c *Catalog, records []FeedbackRecord) st
 	if err := os.MkdirAll(filepath.Join(dir, "feedback"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	c.DataDir = dir
+	c.SetFeedbackTenant("test-tenant")
 	f, err := os.Create(filepath.Join(dir, "feedback", "feedback-test.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 	enc := json.NewEncoder(f)
-	for _, r := range records {
+	for i, r := range records {
+		// Synthetic fixtures model records that an operator explicitly approved.
+		r.SchemaVersion = FeedbackSchemaVersion
+		r.DatasetID = c.FeedbackDatasetID()
+		r.TenantID = c.FeedbackTenantID
+		r.Fingerprint = "fixture-" + string(rune('a'+i))
+		r.TrustStatus = FeedbackTrustTrusted
+		r.ReviewStatus = FeedbackReviewApproved
 		if err := enc.Encode(r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	c.DataDir = dir
 	return dir
 }
 
@@ -87,6 +95,74 @@ func TestLearnFromFeedbackPromotesRules(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected LEARNED_TABLE_CORRECTION warning, got %+v", v.Warnings)
+	}
+}
+
+func TestLearnFromFeedbackSkipsPendingUntrustedAndDuplicateRecords(t *testing.T) {
+	c := loadTestCatalog(t)
+	origDataDir := c.DataDir
+	origTenant := c.FeedbackTenantID
+	defer func() {
+		c.DataDir = origDataDir
+		c.SetFeedbackTenant(origTenant)
+		c.applyLearnedRules(nil)
+	}()
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "feedback"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c.DataDir = dir
+	c.SetFeedbackTenant("tenant-a")
+	path := filepath.Join(dir, "feedback", "feedback-test.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := json.NewEncoder(f)
+	base := FeedbackRecord{
+		SchemaVersion: FeedbackSchemaVersion,
+		Question:      "도구별 평균 실행시간",
+		Outcome:       "failure",
+		Errors:        []ValidationIssue{{Level: "error", Code: "UNKNOWN_COLUMN", Table: "PUBLIC.JAMYPG_MCP_ACTIVITY", Column: "ELAPSED_SEC"}},
+		DatasetID:     c.FeedbackDatasetID(),
+		TenantID:      "tenant-a",
+		Fingerprint:   "same-pattern",
+	}
+	pending := base
+	pending.TrustStatus = FeedbackTrustUntrusted
+	pending.ReviewStatus = FeedbackReviewPending
+	_ = enc.Encode(pending)
+	legacy := FeedbackRecord{
+		Question: "legacy", Outcome: "failure", Errors: base.Errors,
+	}
+	_ = enc.Encode(legacy) // pre-v2 records fail closed until explicitly migrated/reviewed
+	approved := base
+	approved.TrustStatus = FeedbackTrustTrusted
+	approved.ReviewStatus = FeedbackReviewApproved
+	_ = enc.Encode(approved)
+	_ = enc.Encode(approved) // duplicate fingerprint must count only once
+	foreign := approved
+	foreign.Fingerprint = "foreign"
+	foreign.TenantID = "tenant-b"
+	_ = enc.Encode(foreign)
+	_ = f.Close()
+
+	res, err := c.LearnFromFeedback(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res["trusted_scanned"].(int); got != 1 {
+		t.Fatalf("trusted_scanned = %d, want 1", got)
+	}
+	if got := res["duplicates_skipped"].(int); got != 1 {
+		t.Fatalf("duplicates_skipped = %d, want 1", got)
+	}
+	if got := res["skipped_unreviewed"].(int); got != 3 {
+		t.Fatalf("skipped_unreviewed = %d, want 3 (pending + legacy + foreign scope)", got)
+	}
+	if got := res["promoted"].(int); got != 0 {
+		t.Fatalf("unreviewed/duplicate feedback must not satisfy threshold: %d", got)
 	}
 }
 
