@@ -60,6 +60,9 @@ type Server struct {
 	queryCache      *resultCache // TTL result cache for repeated identical queries
 	asyncJobs       *asyncJobStore
 	feedbackLimiter *feedbackRateLimiter
+	auditMu         sync.Mutex             // serializes audit appends + hash chaining
+	auditTips       map[string]auditTipRec // audit file path → last {seq, hash}
+	metrics         *metricsRegistry       // in-memory Prometheus counters
 }
 
 // cat returns the current catalog; dataset tools swap it atomically so
@@ -111,6 +114,7 @@ func NewServer(c *catalog.Catalog, opts Options) *Server {
 		queryCache:      newResultCache(),
 		asyncJobs:       newAsyncJobStore(),
 		feedbackLimiter: newFeedbackRateLimiter(feedbackDefaultLimit, feedbackDefaultWindow),
+		metrics:         newMetricsRegistry(),
 	}
 	s.setCatalog(c)
 	return s
@@ -1446,10 +1450,6 @@ func findRegistryFile(name string) (string, bool) {
 // auditToolCall appends every MCP tool invocation to an append-only JSONL so
 // SQL-generation steps are traceable. Failures to write never block a call.
 func (s *Server) auditToolCall(params json.RawMessage, dur time.Duration, callErr error) {
-	dir := filepath.Join(s.cat().DataDir, "audit")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
 	var req struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -1469,17 +1469,8 @@ func (s *Server) auditToolCall(params json.RawMessage, dur time.Duration, callEr
 	if callErr != nil {
 		entry["error"] = callErr.Error()
 	}
-	b, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
-	path := filepath.Join(dir, "audit-"+time.Now().Format("20060102")+".jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = f.Write(append(b, '\n'))
+	s.recordToolMetric(req.Name, dur.Milliseconds(), callErr != nil)
+	s.appendAudit(entry)
 }
 
 func nullIfEmpty(s string) string {

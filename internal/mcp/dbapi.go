@@ -3,7 +3,6 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -563,10 +562,7 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, s.DB.Snapshot())
 	})
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = io.WriteString(w, s.DB.PrometheusText())
-	})
+	mux.HandleFunc("GET /metrics", s.serveMetrics)
 }
 
 // requireQueryActor gates DB-touching query endpoints: meta mode → any

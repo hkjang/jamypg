@@ -64,8 +64,12 @@ docker logs jamypg-mcp | head -20
 | 컴파일 품질 | `GET /api/health` / MCP `get_catalog_health` | `status`, `error_count` 추이 |
 | 사용 추적 | `data/metadb/audit/audit-YYYYMMDD.jsonl` | 도구별 호출량·소요·오류율 집계 |
 | DB 실행 추적 | `data/metadb/audit/query-YYYYMMDD.jsonl` | `db:execute` 항목 — SQL·행 수·소요·오류코드(`PG-*`/`MY-*`/`TIMEOUT`) |
-| 쿼리 메트릭 | `GET /metrics` (Prometheus) | `db_query_total`/`db_query_failure_total`/`db_query_slow_total`, `db_pool_*`(open/in_use/idle, wait_count) |
+| 쿼리·도구·품질 메트릭 | `GET /metrics` (Prometheus) | DB: `db_query_total`/`db_query_failure_total`/`db_query_slow_total`, `db_pool_*`. 서버: `jamypg_up`, `jamypg_build_info`, `jamypg_tool_calls_total{tool,status}`, `jamypg_tool_duration_ms_sum{tool}`, `jamypg_catalog_tables`/`_relations`, `jamypg_metadata_quality_score`, `jamypg_metadata_quality_gate_pass` |
+| 메타 품질 대시보드 | `/admin/quality` | 종합 점수·등급, 릴리스 게이트 위반, 테이블별 품질(점수 낮은 순), 감사 로그 무결성 검증 |
 | 정확도 | `docker exec jamypg-mcp jamypg-eval -data /app/data/metadb` | 지표 하락 여부 |
+
+`/metrics`는 DB 커넥터 메트릭과 서버/카탈로그/품질 게이지를 한 엔드포인트에서
+Prometheus 텍스트 포맷으로 노출합니다(외부 클라이언트 라이브러리 없음).
 
 감사 로그 예시 집계:
 
@@ -74,6 +78,28 @@ jq -r .tool audit-*.jsonl | sort | uniq -c | sort -rn      # 도구별 호출량
 jq 'select(.is_error==true)' audit-*.jsonl                  # 오류만
 jq -r .entry.error_code query-*.jsonl | sort | uniq -c      # DB 오류코드 분포
 ```
+
+### 감사 로그 무결성 (해시 체인)
+
+모든 감사 엔트리는 단조 증가 `seq`와 이전 엔트리에 연결되는 `hash`를 갖습니다
+(`hash_n = sha256(prev_hash ‖ canonical_json(entry))`). 한 줄이라도 삭제·수정·
+재배열되면 체인이 깨지고 위치가 특정됩니다.
+
+```sh
+curl -s "http://127.0.0.1:9797/api/audit/verify?day=YYYYMMDD"   # 관리자
+# → {"valid":true,"entries":N,"tip_hash":"..."} 또는
+#   {"valid":false,"verified_entries":k,"broken_at_line":i,"reason":"..."}
+```
+
+`/admin/quality` 하단에서도 검증할 수 있습니다. 이 기능 도입 이전에 기록된
+로그는 해시가 없어 `valid:false`로 표시됩니다(정상 — 신규 엔트리부터 보증).
+
+### 메타데이터 스케줄러
+
+`-sync-source <profile-id> -sync-interval <duration>`(예: `24h`)로 주기적
+증분 메타데이터 동기화를 서버 내장으로 실행합니다(cron 불필요). 각 실행은
+변경 건수·품질 점수·게이트 통과 여부를 로그와 감사 로그에 남깁니다. 증분·폐기
+후보 원칙은 유지되어 업무 의미를 자동 변경하지 않습니다. 최소 간격 1분.
 
 ## 데이터셋 운영
 

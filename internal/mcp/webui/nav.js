@@ -28,6 +28,7 @@
       { key: 'reviews',  href: '/admin/reviews', icon: '🧾', label: '메타 검토',  show: 'always' },
     ]},
     { title: '관리', items: [
+      { key: 'quality',  href: '/admin/quality',  icon: '📈', label: '메타 품질', show: 'always' },
       { key: 'users',    href: '/admin/users',    icon: '👥', label: '사용자',   show: 'admin' },
       { key: 'settings', href: '/admin/settings', icon: '⚙️', label: '서버 설정', show: 'admin' },
       { key: 'keys',     href: '/admin/keys',     icon: '🔑', label: 'MCP 키',   show: 'auth' },

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +33,7 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/editor", s.guardPage(s.serveWebUI("webui/editor.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/db", s.guardPage(s.serveWebUI("webui/db.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/reviews", s.guardPage(s.serveWebUI("webui/reviews.html", "text/html; charset=utf-8")))
+	mux.HandleFunc("GET /admin/quality", s.guardPage(s.serveWebUI("webui/quality.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/users", s.guardAdminPage(s.serveWebUI("webui/users.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/keys", s.guardPage(s.serveWebUI("webui/keys.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/settings", s.guardAdminPage(s.serveWebUI("webui/settings.html", "text/html; charset=utf-8")))
@@ -75,6 +75,12 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
 		}
 		writeJSON(w, http.StatusOK, s.cat().SuggestModelCandidates(req.Tables, req.Kinds))
+	})
+	mux.HandleFunc("GET /api/audit/verify", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		writeJSON(w, http.StatusOK, s.VerifyAuditChain(r.URL.Query().Get("day")))
 	})
 	mux.HandleFunc("GET /api/metadata/impact", func(w http.ResponseWriter, r *http.Request) {
 		table := r.URL.Query().Get("table")
@@ -360,10 +366,6 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 
 // adminAudit records REST mutations into the same audit JSONL as MCP calls.
 func (s *Server) adminAudit(r *http.Request, action, detail string, callErr error) {
-	dir := filepath.Join(s.cat().DataDir, "audit")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
 	entry := map[string]any{
 		"ts":     time.Now().Format(time.RFC3339Nano),
 		"tool":   "admin:" + action,
@@ -374,17 +376,7 @@ func (s *Server) adminAudit(r *http.Request, action, detail string, callErr erro
 		entry["is_error"] = true
 		entry["error"] = callErr.Error()
 	}
-	b, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
-	path := filepath.Join(dir, "audit-"+time.Now().Format("20060102")+".jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = f.Write(append(b, '\n'))
+	s.appendAudit(entry)
 }
 
 func (s *Server) serveWebUI(path, contentType string) http.HandlerFunc {

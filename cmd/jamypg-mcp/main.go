@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"jamypg/internal/catalog"
 	"jamypg/internal/mcp"
@@ -31,6 +32,8 @@ func main() {
 		oidcClientID   string
 		oidcSecret     string
 		oidcRedirect   string
+		syncSource     string
+		syncInterval   time.Duration
 	)
 	flag.StringVar(&dataDir, "data", filepath.Join("data", "metadb"), "Path to metadata dataset directory")
 	flag.StringVar(&transport, "transport", "http", "MCP transport: http or stdio")
@@ -48,6 +51,8 @@ func main() {
 	flag.StringVar(&oidcClientID, "oidc-client-id", os.Getenv("JAMYPG_OIDC_CLIENT_ID"), "OIDC client id")
 	flag.StringVar(&oidcSecret, "oidc-client-secret", os.Getenv("JAMYPG_OIDC_CLIENT_SECRET"), "OIDC client secret")
 	flag.StringVar(&oidcRedirect, "oidc-redirect-url", os.Getenv("JAMYPG_OIDC_REDIRECT_URL"), "OIDC redirect URL, e.g. https://host:9797/auth/sso/callback")
+	flag.StringVar(&syncSource, "sync-source", os.Getenv("JAMYPG_SYNC_SOURCE"), "DB profile id to auto-sync metadata from on a schedule (with -sync-interval)")
+	flag.DurationVar(&syncInterval, "sync-interval", 0, "Interval for scheduled incremental metadata sync (e.g. 24h); 0 disables (requires -sync-source)")
 	flag.Parse()
 
 	if err := validateHTTPExposure(transport, addr, metaDSN, adminToken, publicMCP); err != nil {
@@ -144,6 +149,9 @@ func main() {
 		log.Printf("standalone mode (no meta db): login/users/MCP keys disabled; profiles from db_profiles.json")
 	}
 	log.Printf("admin console: http://%s/admin, API docs: http://%s/docs", addr, addr)
+	if syncInterval > 0 && syncSource != "" {
+		srv.StartScheduler(context.Background(), syncSource, syncInterval)
+	}
 	if err := mcp.ServeServer(addr, srv); err != nil {
 		log.Fatal(err)
 	}
