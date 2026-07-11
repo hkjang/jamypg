@@ -27,6 +27,18 @@ go run ./cmd/jamypg-mcp -data ./data/metadb -addr 127.0.0.1:9797
 
 봇 토큰은 OpenMetadata의 *Settings → Bots*에서 발급합니다(예: `ingestion-bot`).
 
+## 관리 콘솔 (curl 없이)
+
+좌측 내비 **🔗 OpenMetadata** (`/admin/openmetadata`)에서 GUI로 운영할 수 있습니다:
+
+- **연결 상태 확인** — 설정·연결·서버 버전 표시
+- **Import**: scope/max/용어집 포함 선택 → *미리보기*(후보 테이블) → *반영 + 리로드*
+  (확인 다이얼로그, 컬럼 후보·PII 배지·skipped 표시)
+- **Export**: *계획(dry-run)* → *실제 반영*(변경 계획·기록 상태 표)
+- 하단에 원본 JSON 응답 표시
+
+REST/MCP를 그대로 호출하므로 아래 API와 동작·안전장치가 동일합니다.
+
 ## Import (OpenMetadata → jamypg)
 
 OpenMetadata의 테이블/컬럼 메타데이터를 가져와 jamypg 카탈로그의 **빈 필드에만**

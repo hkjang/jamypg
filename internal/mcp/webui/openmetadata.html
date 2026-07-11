@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JASQL · OpenMetadata 연동</title>
+<style>
+  :root{
+    --bg:#f5f7fa;--card:#fff;--ink:#1c2430;--sub:#5b6b7f;--line:#dde4ec;
+    --blue:#2563eb;--green:#15803d;--green-soft:#e6f6ec;--amber:#b45309;
+    --red:#b91c1c;--red-soft:#fdeaea;--mono:ui-monospace,'Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,'Malgun Gothic','Noto Sans KR',sans-serif;}
+  header{background:#101a2e;color:#e8eefc;padding:12px 20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;position:sticky;top:0;z-index:20;}
+  header h1{font-size:16px;margin:0 10px 0 0;}
+  .grow{flex:1;}
+  header input#adminToken{background:#1d2b47;border:1px solid #35507f;color:#e8eefc;border-radius:6px;padding:6px 10px;width:160px;}
+  main{max-width:1200px;margin:0 auto;padding:16px 20px 90px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--sub);font-weight:600;letter-spacing:.3px;text-transform:uppercase;}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  input,select{border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-size:13px;background:#fff;}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer;}
+  .btn:hover{border-color:var(--blue);color:var(--blue);}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600;}
+  .btn.warn{background:var(--amber);border-color:var(--amber);color:#fff;}
+  .pill{font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;}
+  .pill.ok{background:var(--green-soft);color:var(--green);} .pill.bad{background:var(--red-soft);color:var(--red);}
+  .mini{font-size:12px;color:var(--sub);}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--sub);}
+  td.mono{font-family:var(--mono);font-size:12px;}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:6px;background:#eef1f5;color:#334;margin-right:3px;}
+  .tag.pii{background:var(--red-soft);color:var(--red);}
+  .counts{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0;}
+  .counts b{font-size:20px;font-variant-numeric:tabular-nums;}
+  .msg{font-size:12.5px;margin-left:6px;} .msg.ok{color:var(--green);} .msg.bad{color:var(--red);}
+  pre{background:#0d1626;color:#dbe6ff;border-radius:10px;padding:12px;font-family:var(--mono);font-size:12px;overflow:auto;max-height:280px;}
+  .empty{color:var(--sub);padding:16px 0;}
+  label.f{font-size:12px;color:var(--sub);display:flex;gap:6px;align-items:center;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔗 OpenMetadata 연동</h1>
+  <span class="mini" id="target" style="color:#9db4dd"></span>
+  <input id="adminToken" type="password" placeholder="관리 토큰">
+  <span class="grow"></span>
+  <span id="statusPill"></span>
+  <span class="msg" id="msg"></span>
+</header>
+<main>
+  <div class="card">
+    <div class="row">
+      <button class="btn" id="statusBtn">연결 상태 확인</button>
+      <span class="mini" id="statusDetail"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Import — OpenMetadata → jamypg (빈 필드만 후보)</h2>
+    <div class="row">
+      <label class="f">scope <input id="impScope" placeholder="service.db (선택)" style="width:200px"></label>
+      <label class="f">max <input id="impMax" type="number" value="500" style="width:80px"></label>
+      <label class="f"><input type="checkbox" id="impGloss" checked> 용어집 포함</label>
+      <button class="btn" id="previewBtn">미리보기</button>
+      <button class="btn warn" id="applyBtn">반영 + 리로드</button>
+    </div>
+    <div class="counts" id="impCounts"></div>
+    <div id="impTables"></div>
+  </div>
+
+  <div class="card">
+    <h2>Export — jamypg → OpenMetadata (빈 설명 컬럼만)</h2>
+    <div class="row">
+      <label class="f">scope <input id="expScope" placeholder="service.db (선택)" style="width:200px"></label>
+      <label class="f">max <input id="expMax" type="number" value="500" style="width:80px"></label>
+      <button class="btn" id="expPlanBtn">계획 (dry-run)</button>
+      <button class="btn warn" id="expPushBtn">실제 반영</button>
+    </div>
+    <div class="counts" id="expCounts"></div>
+    <div id="expTable"></div>
+  </div>
+
+  <div class="card">
+    <h2>원본 응답</h2>
+    <pre id="raw">—</pre>
+  </div>
+</main>
+
+<script src="/admin/nav.js"></script>
+<script>
+'use strict';
+var $=function(id){return document.getElementById(id);};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+function headers(j){var h={};if(j)h['Content-Type']='application/json';var t=$('adminToken');if(t&&t.value)h['X-Admin-Token']=t.value;return h;}
+function flash(ok,t){var m=$('msg');m.className='msg '+(ok?'ok':'bad');m.textContent=t;setTimeout(function(){m.textContent='';},3000);}
+function raw(o){$('raw').textContent=JSON.stringify(o,null,2);}
+
+function status(){
+  fetch('/api/openmetadata/status',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+    raw(d);
+    if(!d.configured){$('statusPill').innerHTML='<span class="pill bad">미설정</span>';$('statusDetail').textContent=d.error||'';return;}
+    $('target').textContent=d.base_url||'';
+    if(d.reachable){$('statusPill').innerHTML='<span class="pill ok">연결됨</span>';
+      $('statusDetail').textContent='서버 버전 '+JSON.stringify(d.server_version||{});}
+    else{$('statusPill').innerHTML='<span class="pill bad">연결 실패</span>';$('statusDetail').textContent=d.error||'';}
+  }).catch(function(e){flash(false,e.message);});
+}
+
+function doImport(apply){
+  var body={scope:$('impScope').value.trim(),max_tables:parseInt($('impMax').value||'500',10),
+    include_glossary:$('impGloss').checked,apply:apply};
+  if(apply && !confirm('OpenMetadata 메타데이터를 overrides.json/glossary.json에 병합하고 카탈로그를 리로드합니다.\n각 파일은 자동 백업되며 기존 값은 덮어쓰지 않습니다. 진행할까요?')) return;
+  fetch('/api/openmetadata/import',{method:'POST',headers:headers(true),body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){
+      var d=res.d; raw(d);
+      if(!res.ok||d.error){flash(false,d.error||'실패');return;}
+      var c=d.counts||{};
+      $('impCounts').innerHTML='<span>컬럼 <b>'+(c.columns||0)+'</b></span><span>테이블 <b>'+(c.tables||0)+'</b></span>'+
+        '<span>용어집 <b>'+(c.glossary||0)+'</b></span><span class="mini">fetched '+(d.fetched_tables||0)+'</span>'+
+        (d.applied?'<span class="pill ok">반영됨'+(d.reloaded?' · 리로드':'')+'</span>':'<span class="pill">미리보기</span>');
+      var cols=d.column_candidates||[];
+      $('impTables').innerHTML = cols.length ? (
+        '<table><thead><tr><th>테이블</th><th>컬럼</th><th>논리명</th><th>설명</th><th>PII</th></tr></thead><tbody>'+
+        cols.map(function(x){return '<tr><td class="mono">'+esc(x.table)+'</td><td class="mono">'+esc(x.column)+'</td>'+
+          '<td>'+esc(x.logical_name||'')+'</td><td>'+esc(x.description||'')+'</td>'+
+          '<td>'+(x.pii?'<span class="tag pii">PII</span>':'')+'</td></tr>';}).join('')+'</tbody></table>'
+      ) : '<div class="empty">제안할 컬럼 후보가 없습니다(이미 채워져 있거나 매칭 테이블 없음).</div>';
+      if((d.skipped_tables||[]).length) $('impTables').innerHTML+='<div class="mini">skipped: '+esc((d.skipped_tables||[]).join(', '))+'</div>';
+      flash(true, apply?'반영 완료':'미리보기 완료');
+    }).catch(function(e){flash(false,e.message);});
+}
+
+function doExport(dry){
+  var body={scope:$('expScope').value.trim(),max_tables:parseInt($('expMax').value||'500',10),dry_run:dry};
+  if(!dry && !confirm('jamypg 컬럼 설명을 OpenMetadata에 기록합니다(빈 설명 컬럼만). 진행할까요?')) return;
+  fetch('/api/openmetadata/export',{method:'POST',headers:headers(true),body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){
+      var d=res.d; raw(d);
+      if(!res.ok||d.error){flash(false,d.error||'실패');return;}
+      $('expCounts').innerHTML='<span>계획 <b>'+(d.planned||0)+'</b></span>'+
+        (d.dry_run?'<span class="pill">dry-run</span>':'<span class="pill ok">반영 '+ (d.pushed||0) +(d.failed?(' · 실패 '+d.failed):'')+'</span>');
+      var ch=d.changes||[];
+      $('expTable').innerHTML = ch.length ? (
+        '<table><thead><tr><th>테이블</th><th>컬럼</th><th>설명(→OM)</th><th>상태</th></tr></thead><tbody>'+
+        ch.map(function(x){return '<tr><td class="mono">'+esc(x.table)+'</td><td class="mono">'+esc(x.column||'')+'</td>'+
+          '<td>'+esc(x.value)+'</td><td>'+(x.error?('<span class="pill bad">'+esc(x.error)+'</span>'):(x.pushed?'<span class="pill ok">기록됨</span>':'<span class="mini">예정</span>'))+'</td></tr>';}).join('')+'</tbody></table>'
+      ) : '<div class="empty">OpenMetadata에 채울 빈 설명 컬럼이 없습니다.</div>';
+      flash(true, dry?'계획 생성':'반영 완료');
+    }).catch(function(e){flash(false,e.message);});
+}
+
+$('statusBtn').onclick=status;
+$('previewBtn').onclick=function(){doImport(false);};
+$('applyBtn').onclick=function(){doImport(true);};
+$('expPlanBtn').onclick=function(){doExport(true);};
+$('expPushBtn').onclick=function(){doExport(false);};
+JASQL.mount({page:'openmetadata',onReady:status});
+</script>
+</body>
+</html>
