@@ -123,7 +123,7 @@
 
     var aside = document.createElement('aside');
     aside.className = 'jsb';
-    var html = '<a class="jbrand" href="/"><img src="/admin/logo.png" style="width:24px;height:24px;object-fit:contain;border-radius:4px;"/> jamypg</a><nav>';
+    var html = '<a class="jbrand" href="/"><img src="/admin/logo-transparent.png" style="width:24px;height:24px;object-fit:contain;border-radius:4px;"/> jamypg</a><nav>';
     GROUPS.forEach(function (g) {
       var items = g.items.filter(function (it) { return show(it.show); });
       if (!items.length) return;

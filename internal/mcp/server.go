@@ -29,7 +29,7 @@ const ProtocolVersion = "2025-06-18"
 
 // Version is the JAMYPG server version, surfaced in serverInfo, /auth/me, and
 // the web UI (sidebar footer).
-const Version = "0.2.0"
+const Version = "0.35.0"
 
 type Options struct {
 	Endpoint         string
