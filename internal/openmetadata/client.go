@@ -175,3 +175,22 @@ func (c *Client) patch(ctx context.Context, path string, ops []jsonPatchOp) erro
 	}
 	return c.do(ctx, http.MethodPatch, path, "application/json-patch+json", strings.NewReader(string(b)), nil)
 }
+
+// AddTableLineage records a table→table lineage edge (fromEntity is upstream,
+// toEntity downstream) via PUT /api/v1/lineage. Optional description is stored
+// in lineageDetails. Idempotent on the OpenMetadata side (re-adding the same
+// edge is a no-op).
+func (c *Client) AddTableLineage(ctx context.Context, fromID, toID, description string) error {
+	edge := map[string]any{
+		"fromEntity": map[string]any{"id": fromID, "type": "table"},
+		"toEntity":   map[string]any{"id": toID, "type": "table"},
+	}
+	if description != "" {
+		edge["lineageDetails"] = map[string]any{"description": description}
+	}
+	body, err := json.Marshal(map[string]any{"edge": edge})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPut, "/v1/lineage", "application/json", strings.NewReader(string(body)), nil)
+}

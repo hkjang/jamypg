@@ -254,6 +254,89 @@ func (s *Server) omExport(ctx context.Context, scope string, maxTables int, dryR
 	return res
 }
 
+// omExportLineage pushes jamypg's relation graph to OpenMetadata as table-level
+// lineage edges (fromEntity = referenced/parent table, toEntity = base/child
+// table). This maps jamypg's FK-style relationships to OpenMetadata's
+// relationship lineage; it is NOT ETL data-flow. dryRun (default) returns the
+// plan only.
+func (s *Server) omExportLineage(ctx context.Context, scope string, maxTables int, dryRun bool) map[string]any {
+	c, err := s.omClient()
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	tables, terr := c.ListTables(ctx, scope, maxTables)
+	if terr != nil && len(tables) == 0 {
+		return map[string]any{"error": "list tables failed: " + terr.Error()}
+	}
+	// map jamypg-form schema.table (uppercased) → OpenMetadata entity id
+	idByFQN := map[string]string{}
+	for _, t := range tables {
+		if fqn := openmetadata.SchemaTable(t.FullyQualifiedName); fqn != "" && t.ID != "" {
+			idByFQN[strings.ToUpper(fqn)] = t.ID
+		}
+	}
+
+	type edge struct {
+		From    string `json:"from"`
+		To      string `json:"to"`
+		Pushed  bool   `json:"pushed"`
+		Skipped string `json:"skipped,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
+	var plan []edge
+	pushed, failed, skipped := 0, 0, 0
+
+	for _, r := range s.cat().Relations {
+		fromFQN := r.ReferenceSchema + "." + r.ReferenceTable // parent (upstream)
+		toFQN := r.BaseSchema + "." + r.BaseTable             // child (downstream)
+		e := edge{From: fromFQN, To: toFQN}
+		fromID, okF := idByFQN[strings.ToUpper(fromFQN)]
+		toID, okT := idByFQN[strings.ToUpper(toFQN)]
+		if !okF || !okT {
+			e.Skipped = "not found in OpenMetadata"
+			skipped++
+			plan = append(plan, e)
+			continue
+		}
+		if fromID == toID {
+			e.Skipped = "self-reference"
+			skipped++
+			plan = append(plan, e)
+			continue
+		}
+		if !dryRun {
+			desc := "jamypg relation " + r.BaseColumn + " → " + r.ReferenceColumn
+			if perr := c.AddTableLineage(ctx, fromID, toID, desc); perr != nil {
+				e.Error = perr.Error()
+				failed++
+			} else {
+				e.Pushed = true
+				pushed++
+			}
+		}
+		plan = append(plan, e)
+	}
+
+	res := map[string]any{
+		"source":    "jamypg",
+		"target":    c.BaseURL,
+		"dry_run":   dryRun,
+		"relations": len(s.cat().Relations),
+		"planned":   len(plan) - skipped,
+		"skipped":   skipped,
+		"edges":     plan,
+		"note":      "jamypg 관계(FK)를 OpenMetadata 관계형 lineage로 매핑합니다(ETL 데이터흐름 아님). from=참조(부모), to=기준(자식) 테이블.",
+	}
+	if !dryRun {
+		res["pushed"] = pushed
+		res["failed"] = failed
+	}
+	if terr != nil {
+		res["fetch_warning"] = terr.Error()
+	}
+	return res
+}
+
 // jamypgColumnDescription renders a description jamypg can contribute back:
 // prefer an explicit description, else compose from logical name.
 func jamypgColumnDescription(t *catalog.Table, c *catalog.Column) string {

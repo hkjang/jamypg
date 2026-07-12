@@ -513,6 +513,11 @@ func (s *Server) tools() []map[string]any {
 			"scope":      str("OpenMetadata database/schema FQN to scope; omit for all"),
 			"max_tables": integer("Max tables to compare (default 500)"),
 		}, nil)),
+		tool("export_lineage_to_openmetadata", "Push jamypg's relation graph to OpenMetadata as table-level lineage edges (fromEntity = referenced/parent table, toEntity = base/child table). Maps jamypg FK-style relationships to OpenMetadata relationship lineage (NOT ETL data-flow). dry_run=true (default) returns the plan; dry_run=false performs PUT /api/v1/lineage writes (admin). Edges whose tables are absent in OpenMetadata are skipped and reported.", objectSchema(map[string]any{
+			"scope":      str("OpenMetadata database/schema FQN to scope table id resolution; omit for all"),
+			"max_tables": integer("Max tables to resolve ids from (default 500)"),
+			"dry_run":    boolSchema("true → plan only (default); false → write lineage to OpenMetadata (admin)"),
+		}, nil)),
 		tool("export_to_openmetadata", "Push jamypg-owned column descriptions (explicit, or composed from logical names) BACK to OpenMetadata for columns that lack a description there. Never overwrites existing OpenMetadata descriptions. dry_run=true (default) returns the plan; dry_run=false performs JSON-Patch writes (admin).", objectSchema(map[string]any{
 			"scope":      str("OpenMetadata database/schema FQN to scope; omit for all"),
 			"max_tables": integer("Max tables to scan (default 500)"),
@@ -597,17 +602,18 @@ func annotateTools(list []map[string]any) []map[string]any {
 		destructive bool
 		idempotent  bool
 	}{
-		"put_dataset":               {destructive: true, idempotent: false}, // overwrites a dataset
-		"remove_dataset":            {destructive: true, idempotent: false}, // deletes a dataset
-		"reload_catalog":            {destructive: false, idempotent: true}, // recompiles from disk
-		"learn_from_feedback":       {destructive: false, idempotent: true},
-		"record_feedback":           {destructive: false, idempotent: false}, // appends a queue record
-		"review_feedback":           {destructive: false, idempotent: false}, // changes review state/audit time
-		"decide_candidates":         {destructive: false, idempotent: false}, // persists review decisions
-		"apply_approved_candidates": {destructive: true, idempotent: true},   // merges into dataset files (backed up)
-		"promote_golden_queries":    {destructive: true, idempotent: true},   // appends to golden_queries.json (backed up)
-		"import_openmetadata":       {destructive: true, idempotent: true},   // merges external metadata (apply=true)
-		"export_to_openmetadata":    {destructive: true, idempotent: true},   // writes to OpenMetadata (dry_run=false)
+		"put_dataset":                    {destructive: true, idempotent: false}, // overwrites a dataset
+		"remove_dataset":                 {destructive: true, idempotent: false}, // deletes a dataset
+		"reload_catalog":                 {destructive: false, idempotent: true}, // recompiles from disk
+		"learn_from_feedback":            {destructive: false, idempotent: true},
+		"record_feedback":                {destructive: false, idempotent: false}, // appends a queue record
+		"review_feedback":                {destructive: false, idempotent: false}, // changes review state/audit time
+		"decide_candidates":              {destructive: false, idempotent: false}, // persists review decisions
+		"apply_approved_candidates":      {destructive: true, idempotent: true},   // merges into dataset files (backed up)
+		"promote_golden_queries":         {destructive: true, idempotent: true},   // appends to golden_queries.json (backed up)
+		"import_openmetadata":            {destructive: true, idempotent: true},   // merges external metadata (apply=true)
+		"export_to_openmetadata":         {destructive: true, idempotent: true},   // writes to OpenMetadata (dry_run=false)
+		"export_lineage_to_openmetadata": {destructive: true, idempotent: true},   // writes lineage to OpenMetadata
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -632,16 +638,17 @@ func annotateTools(list []map[string]any) []map[string]any {
 // datasets, learned rules) and therefore require the admin role when auth is
 // enabled — the same rule the REST endpoints enforce via requireAdmin.
 var adminOnlyTools = map[string]bool{
-	"put_dataset":               true,
-	"remove_dataset":            true,
-	"reload_catalog":            true,
-	"learn_from_feedback":       true,
-	"review_feedback":           true,
-	"decide_candidates":         true,
-	"apply_approved_candidates": true,
-	"promote_golden_queries":    true,
-	"import_openmetadata":       true,
-	"export_to_openmetadata":    true,
+	"put_dataset":                    true,
+	"remove_dataset":                 true,
+	"reload_catalog":                 true,
+	"learn_from_feedback":            true,
+	"review_feedback":                true,
+	"decide_candidates":              true,
+	"apply_approved_candidates":      true,
+	"promote_golden_queries":         true,
+	"import_openmetadata":            true,
+	"export_to_openmetadata":         true,
+	"export_lineage_to_openmetadata": true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -1159,6 +1166,17 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.omDrift(ctx, a.Scope, a.MaxTables), nil
+	case "export_lineage_to_openmetadata":
+		var a struct {
+			Scope     string `json:"scope"`
+			MaxTables int    `json:"max_tables"`
+			DryRun    *bool  `json:"dry_run"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		dryRun := a.DryRun == nil || *a.DryRun
+		return s.omExportLineage(ctx, a.Scope, a.MaxTables, dryRun), nil
 	case "get_approved_overrides":
 		return s.cat().ApprovedOverrides(), nil
 	case "apply_approved_candidates":

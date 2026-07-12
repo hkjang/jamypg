@@ -124,3 +124,27 @@ func TestVersionErrorSurfacesStatus(t *testing.T) {
 		t.Fatalf("expected HTTP 403 error, got %v", err)
 	}
 }
+
+func TestAddTableLineageSendsEdge(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b := make([]byte, r.ContentLength)
+		_, _ = r.Body.Read(b)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tok")
+	if err := c.AddTableLineage(context.Background(), "from-id", "to-id", "rel a→b"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/api/v1/lineage" {
+		t.Fatalf("expected PUT /api/v1/lineage, got %s %s", gotMethod, gotPath)
+	}
+	for _, want := range []string{`"fromEntity"`, `"from-id"`, `"toEntity"`, `"to-id"`, `"type":"table"`, `"lineageDetails"`} {
+		if !strings.Contains(gotBody, want) {
+			t.Fatalf("lineage body missing %q: %s", want, gotBody)
+		}
+	}
+}

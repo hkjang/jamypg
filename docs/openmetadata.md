@@ -118,6 +118,22 @@ curl -s -X POST http://127.0.0.1:9797/api/openmetadata/export \
 
 MCP: `export_to_openmetadata{scope?, max_tables?, dry_run?}`.
 
+### Lineage export (관계 → OpenMetadata lineage)
+
+`export_lineage_to_openmetadata`(REST `POST /api/openmetadata/lineage`)는 jamypg의
+관계 그래프를 OpenMetadata 테이블 lineage 엣지로 push합니다
+(`PUT /api/v1/lineage`). **from=참조(부모), to=기준(자식)** 테이블이며, jamypg의
+FK 스타일 관계를 OpenMetadata의 **관계형 lineage**로 매핑하는 것입니다(ETL
+데이터흐름이 아님). 엔티티 id는 fetch한 테이블 목록에서 해석하고, OpenMetadata에
+없는 테이블이 걸린 엣지는 건너뛰고 보고합니다.
+
+```sh
+# 계획 (기본)
+curl -s -X POST http://127.0.0.1:9797/api/openmetadata/lineage -d '{"dry_run":true}'
+# 실제 반영 (관리자)
+curl -s -X POST http://127.0.0.1:9797/api/openmetadata/lineage -d '{"dry_run":false}'
+```
+
 ## Drift — 대조/조정 리포트
 
 `openmetadata_drift`(REST `POST /api/openmetadata/drift`)는 아무것도 쓰지 않고

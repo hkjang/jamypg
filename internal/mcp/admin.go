@@ -138,6 +138,25 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.omDrift(r.Context(), req.Scope, req.MaxTables))
 	})
+	mux.HandleFunc("POST /api/openmetadata/lineage", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Scope     string `json:"scope"`
+			MaxTables int    `json:"max_tables"`
+			DryRun    *bool  `json:"dry_run"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		dryRun := req.DryRun == nil || *req.DryRun
+		if !dryRun && !s.requireAdmin(w, r) {
+			return
+		}
+		res := s.omExportLineage(r.Context(), req.Scope, req.MaxTables, dryRun)
+		if !dryRun {
+			s.adminAudit(r, "openmetadata.lineage", s.reviewerFromRequest(r), nil)
+		}
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("POST /api/openmetadata/export", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Scope     string `json:"scope"`
