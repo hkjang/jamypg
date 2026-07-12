@@ -123,7 +123,7 @@
 
     var aside = document.createElement('aside');
     aside.className = 'jsb';
-    var html = '<a class="jbrand" href="/"><span class="dot">🛢️</span> JASQL</a><nav>';
+    var html = '<a class="jbrand" href="/"><img src="/admin/logo.png" style="width:24px;height:24px;object-fit:contain;border-radius:4px;"/> jamypg</a><nav>';
     GROUPS.forEach(function (g) {
       var items = g.items.filter(function (it) { return show(it.show); });
       if (!items.length) return;
@@ -136,7 +136,7 @@
     });
     html += '</nav>';
     var ver = (me && me.version) ? ('v' + me.version) : '';
-    html += '<div class="jfoot">JASQL ' + esc(ver) + (authed ? '' : ' · 단독 모드') + '</div>';
+    html += '<div class="jfoot">jamypg ' + esc(ver) + (authed ? '' : ' · 단독 모드') + '</div>';
     aside.innerHTML = html;
     document.body.appendChild(aside);
 
@@ -174,7 +174,7 @@
         '<button class="jmitem" data-act="keys">🔑 MCP 키 관리</button>' +
         '<div class="jmsep"></div>' +
         '<button class="jmitem danger" data-act="logout">⏻ 로그아웃</button>' +
-        '<div class="jmfoot">JASQL v' + esc(me.version || '') + '</div>' +
+        '<div class="jmfoot">jamypg v' + esc(me.version || '') + '</div>' +
       '</div>';
     header.appendChild(wrap);
 

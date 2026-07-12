@@ -1,5 +1,9 @@
 # JAMYPG NL2SQL MCP
 
+<p align="center">
+  <img src="internal/mcp/webui/logo.png" alt="jamypg Logo" width="180" />
+</p>
+
 Go-based MCP server for metadata-grounded NL2SQL over **PostgreSQL, MySQL, and
 MariaDB**. Current source version: `v0.2.0` (converted from the Oracle-based
 jasql project).

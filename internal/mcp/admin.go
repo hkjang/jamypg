@@ -26,6 +26,8 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	// static UI
 	mux.HandleFunc("GET /{$}", s.serveWebUI("webui/landing.html", "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /admin/nav.js", s.serveWebUI("webui/nav.js", "application/javascript"))
+	mux.HandleFunc("GET /admin/logo.png", s.serveWebUI("webui/logo.png", "image/png"))
+	mux.HandleFunc("GET /favicon.ico", s.serveWebUI("webui/favicon.ico", "image/x-icon"))
 	mux.HandleFunc("GET /admin/ask", s.guardPage(s.serveWebUI("webui/ask.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/history", s.guardPage(s.serveWebUI("webui/history.html", "text/html; charset=utf-8")))
 	mux.HandleFunc("GET /admin/stats", s.guardPage(s.serveWebUI("webui/stats.html", "text/html; charset=utf-8")))
