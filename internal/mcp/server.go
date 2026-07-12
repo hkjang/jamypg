@@ -508,6 +508,10 @@ func (s *Server) tools() []map[string]any {
 			"include_glossary": boolSchema("Also import glossary terms (default true)"),
 			"apply":            boolSchema("true → merge into dataset files + reload (admin); false → preview only (default)"),
 		}, nil)),
+		tool("openmetadata_drift", "Reconciliation report: compare jamypg's catalog against OpenMetadata and classify every logical-name/description/PII divergence as jamypg_gap (jamypg empty, OM has → import candidate), conflict (both differ → human decision), or ext_gap (jamypg has, OM empty → export candidate). Read-only, writes nothing. Use for governance / keeping the two catalogs aligned.", objectSchema(map[string]any{
+			"scope":      str("OpenMetadata database/schema FQN to scope; omit for all"),
+			"max_tables": integer("Max tables to compare (default 500)"),
+		}, nil)),
 		tool("export_to_openmetadata", "Push jamypg-owned column descriptions (explicit, or composed from logical names) BACK to OpenMetadata for columns that lack a description there. Never overwrites existing OpenMetadata descriptions. dry_run=true (default) returns the plan; dry_run=false performs JSON-Patch writes (admin).", objectSchema(map[string]any{
 			"scope":      str("OpenMetadata database/schema FQN to scope; omit for all"),
 			"max_tables": integer("Max tables to scan (default 500)"),
@@ -1144,6 +1148,15 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		}
 		dryRun := a.DryRun == nil || *a.DryRun
 		return s.omExport(ctx, a.Scope, a.MaxTables, dryRun), nil
+	case "openmetadata_drift":
+		var a struct {
+			Scope     string `json:"scope"`
+			MaxTables int    `json:"max_tables"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.omDrift(ctx, a.Scope, a.MaxTables), nil
 	case "get_approved_overrides":
 		return s.cat().ApprovedOverrides(), nil
 	case "apply_approved_candidates":

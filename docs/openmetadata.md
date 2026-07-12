@@ -101,6 +101,26 @@ curl -s -X POST http://127.0.0.1:9797/api/openmetadata/export \
 
 MCP: `export_to_openmetadata{scope?, max_tables?, dry_run?}`.
 
+## Drift — 대조/조정 리포트
+
+`openmetadata_drift`(REST `POST /api/openmetadata/drift`)는 아무것도 쓰지 않고
+jamypg와 OpenMetadata의 논리명·설명·PII를 대조해 세 부류로 분류합니다:
+
+| 분류 | 의미 | 조치 |
+| --- | --- | --- |
+| `jamypg_gap` | jamypg 비어 있음, OM에 값 있음 | **import** 후보 |
+| `conflict` | 양쪽 다 값 있고 서로 다름 | 사람이 어느 쪽 채택할지 결정 |
+| `ext_gap` | jamypg에 값 있음, OM 비어 있음 | **export** 후보 |
+
+```sh
+curl -s -X POST http://127.0.0.1:9797/api/openmetadata/drift \
+  -H 'Content-Type: application/json' -d '{"scope":"svc.db"}'
+# → { counts:{jamypg_gaps,conflicts,ext_gaps}, jamypg_gaps:[…], conflicts:[…], ext_gaps:[…] }
+```
+
+두 카탈로그를 정기적으로 대조해 거버넌스 상 불일치를 조기에 잡고, gap은
+import/export로, conflict는 검토로 해소합니다.
+
 ## 자동화 (스케줄러 연계)
 
 내장 스케줄러(`-sync-interval`)가 매 틱마다 **DB sync(물리) → OpenMetadata

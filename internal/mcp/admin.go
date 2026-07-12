@@ -125,6 +125,16 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, res)
 	})
+	mux.HandleFunc("POST /api/openmetadata/drift", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Scope     string `json:"scope"`
+			MaxTables int    `json:"max_tables"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		writeJSON(w, http.StatusOK, s.omDrift(r.Context(), req.Scope, req.MaxTables))
+	})
 	mux.HandleFunc("POST /api/openmetadata/export", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Scope     string `json:"scope"`

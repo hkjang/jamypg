@@ -101,3 +101,43 @@ func TestImportExternalApplyWritesAndProtects(t *testing.T) {
 		t.Fatalf("re-apply should write nothing: %+v", w2)
 	}
 }
+
+func TestDiffExternalMetadataClassifies(t *testing.T) {
+	c := importTestCatalog(t) // CUST_NO empty; STATUS has logical name "상태(수기)"
+	imp := ExternalImport{
+		Source: "openmetadata",
+		Columns: []ExternalColumnMeta{
+			{Table: "public.customer", Column: "cust_no", LogicalName: "고객번호", PII: true}, // jamypg empty → jamypg_gap (name + pii)
+			{Table: "public.customer", Column: "status", LogicalName: "상태(OM)"},           // both differ → conflict
+		},
+	}
+	res := c.DiffExternalMetadata(imp)
+	gaps := res["jamypg_gaps"].([]driftItem)
+	conflicts := res["conflicts"].([]driftItem)
+
+	var nameGap, piiGap bool
+	for _, g := range gaps {
+		if g.Column == "CUST_NO" && g.Field == "logical_name" && g.ExtValue == "고객번호" {
+			nameGap = true
+		}
+		if g.Column == "CUST_NO" && g.Field == "pii" && g.ExtValue == "true" {
+			piiGap = true
+		}
+	}
+	if !nameGap || !piiGap {
+		t.Fatalf("expected logical_name + pii gaps for CUST_NO: %+v", gaps)
+	}
+	var statusConflict bool
+	for _, cf := range conflicts {
+		if cf.Column == "STATUS" && cf.Field == "logical_name" && cf.JamypgValue == "상태(수기)" && cf.ExtValue == "상태(OM)" {
+			statusConflict = true
+		}
+	}
+	if !statusConflict {
+		t.Fatalf("expected a STATUS logical_name conflict: %+v", conflicts)
+	}
+	counts := res["counts"].(map[string]int)
+	if counts["conflicts"] < 1 || counts["jamypg_gaps"] < 2 {
+		t.Fatalf("counts wrong: %+v", counts)
+	}
+}

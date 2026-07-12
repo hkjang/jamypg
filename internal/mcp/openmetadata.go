@@ -105,55 +105,13 @@ func (s *Server) omStatus(ctx context.Context) map[string]any {
 // omImport fetches OpenMetadata metadata for a scope and proposes it. apply
 // merges into the dataset files and reloads the catalog.
 func (s *Server) omImport(ctx context.Context, scope string, maxTables int, includeGlossary, apply bool) map[string]any {
-	c, err := s.omClient()
+	imp, fetched, err := s.omBuildImport(ctx, scope, maxTables, includeGlossary)
 	if err != nil {
-		return map[string]any{"error": err.Error()}
-	}
-	tables, terr := c.ListTables(ctx, scope, maxTables)
-	if terr != nil && len(tables) == 0 {
-		return map[string]any{"error": "list tables failed: " + terr.Error()}
-	}
-
-	imp := catalog.ExternalImport{Source: "openmetadata"}
-	for _, t := range tables {
-		fqn := openmetadata.SchemaTable(t.FullyQualifiedName)
-		if fqn == "" {
-			continue
-		}
-		imp.Tables = append(imp.Tables, catalog.ExternalTableMeta{
-			Table: fqn, LogicalName: t.DisplayName, Description: t.Description,
-		})
-		for _, col := range t.Columns {
-			imp.Columns = append(imp.Columns, catalog.ExternalColumnMeta{
-				Table:       fqn,
-				Column:      col.Name,
-				LogicalName: col.DisplayName,
-				Description: col.Description,
-				PII:         col.IsPII(),
-			})
-		}
-	}
-
-	if includeGlossary {
-		terms, gerr := c.ListGlossaryTerms(ctx, 500)
-		if gerr == nil {
-			for _, gt := range terms {
-				name := gt.DisplayName
-				if name == "" {
-					name = gt.Name
-				}
-				imp.Glossary = append(imp.Glossary, catalog.ExternalGlossaryTerm{
-					Term: name, Synonyms: gt.Synonyms, Description: gt.Description, Category: "imported",
-				})
-			}
-		}
+		return map[string]any{"error": "list tables failed: " + err.Error()}
 	}
 
 	res := s.cat().ImportExternalMetadata(imp, apply, time.Now())
-	res["fetched_tables"] = len(tables)
-	if terr != nil {
-		res["fetch_warning"] = terr.Error() // partial page failure
-	}
+	res["fetched_tables"] = fetched
 	if applied, _ := res["applied"].(bool); applied {
 		if reload, rerr := s.reloadCatalog(); rerr == nil {
 			res["reloaded"] = reload
@@ -161,6 +119,55 @@ func (s *Server) omImport(ctx context.Context, scope string, maxTables int, incl
 			res["reload_error"] = rerr.Error()
 		}
 	}
+	return res
+}
+
+// omBuildImport fetches OpenMetadata tables/glossary and maps them to the
+// neutral ExternalImport (shared by import and drift).
+func (s *Server) omBuildImport(ctx context.Context, scope string, maxTables int, includeGlossary bool) (catalog.ExternalImport, int, error) {
+	c, err := s.omClient()
+	if err != nil {
+		return catalog.ExternalImport{}, 0, err
+	}
+	tables, terr := c.ListTables(ctx, scope, maxTables)
+	if terr != nil && len(tables) == 0 {
+		return catalog.ExternalImport{}, 0, terr
+	}
+	imp := catalog.ExternalImport{Source: "openmetadata"}
+	for _, t := range tables {
+		fqn := openmetadata.SchemaTable(t.FullyQualifiedName)
+		if fqn == "" {
+			continue
+		}
+		imp.Tables = append(imp.Tables, catalog.ExternalTableMeta{Table: fqn, LogicalName: t.DisplayName, Description: t.Description})
+		for _, col := range t.Columns {
+			imp.Columns = append(imp.Columns, catalog.ExternalColumnMeta{
+				Table: fqn, Column: col.Name, LogicalName: col.DisplayName, Description: col.Description, PII: col.IsPII(),
+			})
+		}
+	}
+	if includeGlossary {
+		if terms, gerr := c.ListGlossaryTerms(ctx, 500); gerr == nil {
+			for _, gt := range terms {
+				name := gt.DisplayName
+				if name == "" {
+					name = gt.Name
+				}
+				imp.Glossary = append(imp.Glossary, catalog.ExternalGlossaryTerm{Term: name, Synonyms: gt.Synonyms, Description: gt.Description, Category: "imported"})
+			}
+		}
+	}
+	return imp, len(tables), nil
+}
+
+// omDrift reports where jamypg and OpenMetadata diverge (gaps / conflicts).
+func (s *Server) omDrift(ctx context.Context, scope string, maxTables int) map[string]any {
+	imp, fetched, err := s.omBuildImport(ctx, scope, maxTables, false)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	res := s.cat().DiffExternalMetadata(imp)
+	res["fetched_tables"] = fetched
 	return res
 }
 

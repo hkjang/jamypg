@@ -218,6 +218,92 @@ func (c *Catalog) ImportExternalMetadata(imp ExternalImport, apply bool, now tim
 	return res
 }
 
+// driftItem is one field-level divergence between jamypg and an external
+// catalog.
+type driftItem struct {
+	Table       string `json:"table"`
+	Column      string `json:"column,omitempty"`
+	Field       string `json:"field"` // logical_name | description | pii
+	JamypgValue string `json:"jamypg_value,omitempty"`
+	ExtValue    string `json:"ext_value,omitempty"`
+}
+
+// DiffExternalMetadata reconciles jamypg against an external catalog without
+// writing anything. It classifies each field as:
+//   - jamypg_gap: jamypg is empty, the external catalog has a value (import candidate)
+//   - conflict:   both have values and they differ (needs a human decision)
+//   - ext_gap:    jamypg has a value, the external catalog is empty (export candidate)
+func (c *Catalog) DiffExternalMetadata(imp ExternalImport) map[string]any {
+	jamypgGaps := []driftItem{}
+	conflicts := []driftItem{}
+	extGaps := []driftItem{}
+	resolved := map[string]bool{}
+	skipped := map[string]bool{}
+
+	classify := func(table, column, field, jv, ev string) {
+		jv, ev = strings.TrimSpace(jv), strings.TrimSpace(ev)
+		switch {
+		case jv == "" && ev != "":
+			jamypgGaps = append(jamypgGaps, driftItem{Table: table, Column: column, Field: field, ExtValue: ev})
+		case jv != "" && ev == "":
+			extGaps = append(extGaps, driftItem{Table: table, Column: column, Field: field, JamypgValue: jv})
+		case jv != "" && ev != "" && !strings.EqualFold(jv, ev):
+			conflicts = append(conflicts, driftItem{Table: table, Column: column, Field: field, JamypgValue: jv, ExtValue: ev})
+		}
+	}
+
+	for _, cm := range imp.Columns {
+		t, ok := c.ResolveTable(cm.Table)
+		if !ok {
+			skipped[strings.ToUpper(cm.Table)] = true
+			continue
+		}
+		col := t.ColumnMap[cleanIdent(cm.Column)]
+		if col == nil {
+			continue
+		}
+		resolved[t.FQN] = true
+		classify(t.FQN, col.Name, "logical_name", col.LogicalName, cm.LogicalName)
+		classify(t.FQN, col.Name, "description", col.Description, cm.Description)
+		// PII is a boolean: represent divergence directionally.
+		switch {
+		case !col.PII && cm.PII:
+			jamypgGaps = append(jamypgGaps, driftItem{Table: t.FQN, Column: col.Name, Field: "pii", ExtValue: "true"})
+		case col.PII && !cm.PII:
+			extGaps = append(extGaps, driftItem{Table: t.FQN, Column: col.Name, Field: "pii", JamypgValue: "true"})
+		}
+	}
+	for _, tm := range imp.Tables {
+		t, ok := c.ResolveTable(tm.Table)
+		if !ok {
+			skipped[strings.ToUpper(tm.Table)] = true
+			continue
+		}
+		resolved[t.FQN] = true
+		classify(t.FQN, "", "logical_name", t.LogicalName, tm.LogicalName)
+		classify(t.FQN, "", "description", t.Description, tm.Description)
+	}
+
+	skippedList := []string{}
+	for k := range skipped {
+		skippedList = append(skippedList, k)
+	}
+	sort.Strings(skippedList)
+
+	return map[string]any{
+		"source":          imp.Source,
+		"resolved_tables": len(resolved),
+		"jamypg_gaps":     jamypgGaps, // import candidates (external → jamypg)
+		"conflicts":       conflicts,  // divergent values; reconcile manually
+		"ext_gaps":        extGaps,    // export candidates (jamypg → external)
+		"counts": map[string]int{
+			"jamypg_gaps": len(jamypgGaps), "conflicts": len(conflicts), "ext_gaps": len(extGaps),
+		},
+		"skipped_tables": skippedList,
+		"note":           "읽기 전용 대조입니다. jamypg_gaps는 import, ext_gaps는 export 후보이며 conflicts는 사람이 어느 쪽을 채택할지 결정해야 합니다.",
+	}
+}
+
 // mergeImportColumns merges proposed column + table overrides into
 // overrides.json, protecting existing non-empty fields.
 func mergeImportColumns(dataDir string, cols []importColEntry, tables []map[string]any) (int, string, error) {
