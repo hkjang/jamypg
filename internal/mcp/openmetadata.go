@@ -104,10 +104,19 @@ func (s *Server) omStatus(ctx context.Context) map[string]any {
 
 // omImport fetches OpenMetadata metadata for a scope and proposes it. apply
 // merges into the dataset files and reloads the catalog.
-func (s *Server) omImport(ctx context.Context, scope string, maxTables int, includeGlossary, apply bool) map[string]any {
+func (s *Server) omImport(ctx context.Context, scope string, maxTables int, includeGlossary, apply, toReview bool) map[string]any {
 	imp, fetched, err := s.omBuildImport(ctx, scope, maxTables, includeGlossary)
 	if err != nil {
 		return map[string]any{"error": "list tables failed: " + err.Error()}
+	}
+
+	// review mode: stage logical-name/description gaps into the review queue
+	// instead of applying, so a human approves them via the normal workflow.
+	if toReview {
+		res := s.cat().StageExternalImport(imp)
+		res["fetched_tables"] = fetched
+		res["mode"] = "review"
+		return res
 	}
 
 	res := s.cat().ImportExternalMetadata(imp, apply, time.Now())

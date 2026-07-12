@@ -111,16 +111,17 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 			MaxTables       int    `json:"max_tables"`
 			IncludeGlossary *bool  `json:"include_glossary"`
 			Apply           bool   `json:"apply"`
+			ToReview        bool   `json:"to_review"`
 		}
 		if r.Body != nil {
 			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
 		}
-		if req.Apply && !s.requireAdmin(w, r) {
+		if (req.Apply || req.ToReview) && !s.requireAdmin(w, r) {
 			return
 		}
 		includeGlossary := req.IncludeGlossary == nil || *req.IncludeGlossary
-		res := s.omImport(r.Context(), req.Scope, req.MaxTables, includeGlossary, req.Apply)
-		if req.Apply {
+		res := s.omImport(r.Context(), req.Scope, req.MaxTables, includeGlossary, req.Apply, req.ToReview)
+		if req.Apply || req.ToReview {
 			s.adminAudit(r, "openmetadata.import", s.reviewerFromRequest(r), nil)
 		}
 		writeJSON(w, http.StatusOK, res)

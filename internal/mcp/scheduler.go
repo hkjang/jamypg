@@ -73,7 +73,7 @@ func (s *Server) runScheduledOMImport(ctx context.Context, scope string) {
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	res := s.omImport(runCtx, scope, 0, true, true)
+	res := s.omImport(runCtx, scope, 0, true, true, false)
 	if errMsg, _ := res["error"].(string); errMsg != "" {
 		log.Printf("scheduled openmetadata import failed: %s", errMsg)
 		s.appendAudit(map[string]any{

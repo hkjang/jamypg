@@ -149,6 +149,27 @@ func (c *Catalog) collectCandidates(tables, kinds []string) []reviewCandidate {
 			})
 		}
 	}
+	// externally-staged candidates (e.g. OpenMetadata import) join the same
+	// queue so they flow through the identical approve → apply pipeline.
+	kindWanted := map[string]bool{}
+	for _, k := range kinds {
+		kindWanted[strings.ToLower(strings.TrimSpace(k))] = true
+	}
+	tableWanted := map[string]bool{}
+	for _, t := range tables {
+		if rt, ok := c.ResolveTable(t); ok {
+			tableWanted[rt.FQN] = true
+		}
+	}
+	for _, ec := range c.loadExternalCandidates() {
+		if len(kindWanted) > 0 && !kindWanted[ec.Kind] {
+			continue
+		}
+		if len(tableWanted) > 0 && !tableWanted[ec.Table] {
+			continue
+		}
+		out = append(out, ec)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Kind != out[j].Kind {
 			return out[i].Kind < out[j].Kind
@@ -327,5 +348,87 @@ func (c *Catalog) ApprovedOverrides() map[string]any {
 			"relations": len(relations), "code_dicts": len(codeDicts),
 		},
 		"note": "승인된 후보만 포함합니다. overrides.json(columns), metrics.json, relations.json에 반영 후 재기동/재적재하세요.",
+	}
+}
+
+// externalCandidatesPath stores candidates staged from an external catalog
+// (e.g. OpenMetadata import in review mode) so they join the review queue.
+func (c *Catalog) externalCandidatesPath() string {
+	return filepath.Join(c.DataDir, "reviews", "imported.json")
+}
+
+func (c *Catalog) loadExternalCandidates() []reviewCandidate {
+	b, err := os.ReadFile(c.externalCandidatesPath())
+	if err != nil {
+		return nil
+	}
+	var out []reviewCandidate
+	if json.Unmarshal(b, &out) != nil {
+		return nil
+	}
+	return out
+}
+
+// StageExternalImport turns an external catalog's column metadata into review
+// candidates (logical_name / description GAPS only — the kinds apply_approved
+// can safely merge) and appends them to the staging file, deduped by id. They
+// then appear in the review queue for human approval. Returns counts.
+func (c *Catalog) StageExternalImport(imp ExternalImport) map[string]any {
+	existing := c.loadExternalCandidates()
+	byID := map[string]bool{}
+	for _, e := range existing {
+		byID[e.ID] = true
+	}
+
+	staged := 0
+	add := func(kind, fqn, column, suggested string) {
+		id := candidateID(kind, fqn, column, suggested)
+		if byID[id] {
+			return
+		}
+		byID[id] = true
+		existing = append(existing, reviewCandidate{
+			ID: id, Source: imp.Source, Kind: kind, Table: fqn, Column: column,
+			Suggested: suggested, Confidence: 0.9,
+			Evidence: []string{"imported from " + imp.Source},
+		})
+		staged++
+	}
+
+	for _, cm := range imp.Columns {
+		t, ok := c.ResolveTable(cm.Table)
+		if !ok {
+			continue
+		}
+		col := t.ColumnMap[cleanIdent(cm.Column)]
+		if col == nil {
+			continue
+		}
+		if cm.LogicalName != "" && col.LogicalName == "" {
+			add("logical_name", t.FQN, col.Name, cm.LogicalName)
+		}
+		if cm.Description != "" && col.Description == "" {
+			add("description", t.FQN, col.Name, cm.Description)
+		}
+	}
+
+	if staged > 0 {
+		path := c.externalCandidatesPath()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+		b, _ := json.MarshalIndent(existing, "", "  ")
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, b, 0o644); err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+	}
+	return map[string]any{
+		"staged":     staged,
+		"total_open": len(existing),
+		"note":       "리뷰 큐에 스테이징했습니다. /admin/reviews 또는 review_candidates로 검토·승인 후 apply_approved_candidates로 반영하세요. (논리명·설명 gap만; PII·충돌은 import apply/drift로 처리)",
 	}
 }

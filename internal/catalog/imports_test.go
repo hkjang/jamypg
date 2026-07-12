@@ -141,3 +141,39 @@ func TestDiffExternalMetadataClassifies(t *testing.T) {
 		t.Fatalf("counts wrong: %+v", counts)
 	}
 }
+
+func TestStageExternalImportFeedsReviewQueue(t *testing.T) {
+	c := importTestCatalog(t) // CUST_NO empty; STATUS has a logical name
+	imp := ExternalImport{
+		Source: "openmetadata",
+		Columns: []ExternalColumnMeta{
+			{Table: "public.customer", Column: "cust_no", LogicalName: "고객번호", Description: "고객 식별자", PII: true},
+			{Table: "public.customer", Column: "status", LogicalName: "상태(OM)"}, // jamypg already set → skip
+		},
+	}
+	res := c.StageExternalImport(imp)
+	if res["staged"].(int) != 2 { // logical_name + description for CUST_NO
+		t.Fatalf("expected 2 staged (ln+desc for the gap column), got %v", res["staged"])
+	}
+
+	// staged candidates must appear in the review queue as pending, source=openmetadata
+	rq := c.ReviewCandidates(nil, nil, "pending")
+	found := 0
+	for _, it := range c.collectCandidates(nil, nil) {
+		if it.Source == "openmetadata" && it.Table == "PUBLIC.CUSTOMER" && it.Column == "CUST_NO" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("expected 2 openmetadata candidates in queue, got %d", found)
+	}
+	if rq["error"] != nil {
+		t.Fatalf("review queue error: %v", rq["error"])
+	}
+
+	// idempotent: staging again adds nothing
+	res2 := c.StageExternalImport(imp)
+	if res2["staged"].(int) != 0 {
+		t.Fatalf("re-stage should be a no-op, got %v", res2["staged"])
+	}
+}

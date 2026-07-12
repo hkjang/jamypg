@@ -81,8 +81,25 @@ curl -s -X POST http://127.0.0.1:9797/api/openmetadata/import \
   -H 'Content-Type: application/json' -d '{"apply":true}'
 ```
 
-MCP: `import_openmetadata{scope?, max_tables?, include_glossary?, apply?}`.
+MCP: `import_openmetadata{scope?, max_tables?, include_glossary?, apply?, to_review?}`.
 멱등 — 재실행 시 이미 채워진 값은 건너뜁니다.
+
+#### 검토 큐로 스테이징 (`to_review`)
+
+바로 반영(`apply`) 대신 **논리명·설명 gap을 검토 큐로 보내** 담당자가 승인 후
+반영하는 경로입니다. OpenMetadata import가 [승인 워크플로](metadata-review.md)와
+하나로 이어집니다.
+
+```sh
+curl -s -X POST http://127.0.0.1:9797/api/openmetadata/import \
+  -H 'Content-Type: application/json' -d '{"to_review":true}'   # 관리자
+# → 리뷰 큐(source=openmetadata) 에 스테이징
+```
+
+이후 `review_candidates`(또는 `/admin/reviews`)에서 검토 → `decide_candidates`로
+승인 → `apply_approved_candidates`로 반영합니다. 스테이징은
+`<data>/reviews/imported.json`에 멱등 저장되며, PII·테이블 오버라이드·충돌은 이
+경로가 아니라 `apply`/`drift`로 처리합니다.
 
 ## Export (jamypg → OpenMetadata)
 
