@@ -15,23 +15,31 @@ import (
 
 // SchedulerConfig configures the background metadata loop.
 type SchedulerConfig struct {
-	Source     string        // db profile id to sync (required to sync)
-	Interval   time.Duration // <=0 disables the whole scheduler
-	WebhookURL string        // optional: POST the digest here each tick
+	Source            string        // db profile id to sync (required to sync)
+	Interval          time.Duration // <=0 disables the whole scheduler
+	WebhookURL        string        // optional: POST the digest here each tick
+	OpenMetadata      bool          // optional: import from OpenMetadata each tick
+	OpenMetadataScope string        // optional scope FQN for the import
+}
+
+func (c SchedulerConfig) enabled() bool {
+	return c.Source != "" || c.WebhookURL != "" || c.OpenMetadata
 }
 
 // StartScheduler launches the background loop unless interval<=0. The loop
 // stops when ctx is canceled. The first run fires after one interval (not at
-// boot) to avoid racing startup. A webhook with no source still fires the
-// digest push on schedule (sync is skipped).
+// boot) to avoid racing startup. Each tick runs, in order: DB sync (physical) →
+// OpenMetadata import (business meaning, gaps only) → digest webhook (notify) —
+// whichever are configured.
 func (s *Server) StartScheduler(ctx context.Context, cfg SchedulerConfig) {
-	if cfg.Interval <= 0 || (cfg.Source == "" && cfg.WebhookURL == "") {
+	if cfg.Interval <= 0 || !cfg.enabled() {
 		return
 	}
 	if cfg.Interval < time.Minute {
 		cfg.Interval = time.Minute // floor: never hammer the source DB
 	}
-	log.Printf("metadata scheduler: every %s (source=%q webhook=%v)", cfg.Interval, cfg.Source, cfg.WebhookURL != "")
+	log.Printf("metadata scheduler: every %s (source=%q openmetadata=%v webhook=%v)",
+		cfg.Interval, cfg.Source, cfg.OpenMetadata, cfg.WebhookURL != "")
 	go func() {
 		t := time.NewTicker(cfg.Interval)
 		defer t.Stop()
@@ -44,12 +52,43 @@ func (s *Server) StartScheduler(ctx context.Context, cfg SchedulerConfig) {
 				if cfg.Source != "" {
 					s.runScheduledSync(ctx, cfg.Source)
 				}
+				if cfg.OpenMetadata {
+					s.runScheduledOMImport(ctx, cfg.OpenMetadataScope)
+				}
 				if cfg.WebhookURL != "" {
 					s.postDigestWebhook(ctx, cfg.WebhookURL, s.MetadataDigest())
 				}
 			}
 		}
 	}()
+}
+
+// runScheduledOMImport applies an incremental OpenMetadata import (gaps only)
+// on a schedule and logs/audits the outcome. Skips cleanly when OpenMetadata is
+// not configured.
+func (s *Server) runScheduledOMImport(ctx context.Context, scope string) {
+	if _, _, src := s.omConfig(); src == "unset" {
+		return // not configured; nothing to do
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	res := s.omImport(runCtx, scope, 0, true, true)
+	if errMsg, _ := res["error"].(string); errMsg != "" {
+		log.Printf("scheduled openmetadata import failed: %s", errMsg)
+		s.appendAudit(map[string]any{
+			"ts": time.Now().Format(time.RFC3339Nano), "tool": "scheduler:openmetadata_import",
+			"detail": scope, "is_error": true, "error": errMsg,
+		})
+		return
+	}
+	written, _ := res["written"].(map[string]int)
+	fetched, _ := res["fetched_tables"].(int)
+	log.Printf("scheduled openmetadata import: fetched=%d written=%v", fetched, written)
+	s.appendAudit(map[string]any{
+		"ts": time.Now().Format(time.RFC3339Nano), "tool": "scheduler:openmetadata_import",
+		"detail": scope, "fetched_tables": fetched, "written": written,
+	})
 }
 
 func (s *Server) runScheduledSync(ctx context.Context, source string) {

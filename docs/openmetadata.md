@@ -103,15 +103,23 @@ MCP: `export_to_openmetadata{scope?, max_tables?, dry_run?}`.
 
 ## 자동화 (스케줄러 연계)
 
-주기적 워크플로 예시:
+내장 스케줄러(`-sync-interval`)가 매 틱마다 **DB sync(물리) → OpenMetadata
+import(업무 의미, 빈 필드만) → 다이제스트 웹훅(통지)** 순서로 실행합니다(cron
+불필요). 설정된 단계만 동작합니다.
 
+```sh
+go run ./cmd/jamypg-mcp -data ./data/metadb -addr 127.0.0.1:9797 \
+  -openmetadata-url http://openmetadata:8585 -openmetadata-token <bot-jwt> \
+  -sync-interval 24h \
+  -sync-source pg-prod \          # 물리 구조 증분 수집(선택)
+  -openmetadata-sync \            # OpenMetadata 업무 메타데이터 자동 import+반영
+  -openmetadata-scope svc.db \    # import 스코프(선택)
+  -digest-webhook https://hooks.slack.com/...   # 결과 통지(선택)
 ```
-매일 새벽:
-  run_metadata_sync            # 물리 구조 변경 감지(내장 스케줄러 -sync-interval)
-  import_openmetadata apply    # OM의 신규 업무 메타데이터를 빈 필드에 반영
-  get_metadata_quality gate    # 품질 게이트 확인
-  → 다이제스트 웹훅으로 결과 통지(-digest-webhook)
-```
+
+- `-openmetadata-sync`는 매 틱 `import_openmetadata apply`(증분·빈 필드만)를 수행하고
+  결과를 로그·감사 로그에 기록합니다. OpenMetadata 미설정 시 조용히 건너뜁니다.
+- 각 단계는 독립적이라 원하는 조합만 켤 수 있습니다(예: OM import + 웹훅만).
 
 `openmetadata_status`(MCP/`GET /api/openmetadata/status`)로 연결·인증·버전을
 먼저 확인하세요.

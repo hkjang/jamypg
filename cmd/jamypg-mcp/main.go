@@ -37,6 +37,8 @@ func main() {
 		digestWebhook  string
 		omURL          string
 		omToken        string
+		omSync         bool
+		omScope        string
 	)
 	flag.StringVar(&dataDir, "data", filepath.Join("data", "metadb"), "Path to metadata dataset directory")
 	flag.StringVar(&transport, "transport", "http", "MCP transport: http or stdio")
@@ -59,6 +61,8 @@ func main() {
 	flag.StringVar(&digestWebhook, "digest-webhook", os.Getenv("JAMYPG_DIGEST_WEBHOOK"), "URL to POST the metadata digest JSON to on each scheduler tick (with -sync-interval)")
 	flag.StringVar(&omURL, "openmetadata-url", os.Getenv("JAMYPG_OPENMETADATA_URL"), "OpenMetadata base URL (e.g. http://host:8585) to import/export metadata")
 	flag.StringVar(&omToken, "openmetadata-token", os.Getenv("JAMYPG_OPENMETADATA_TOKEN"), "OpenMetadata bot JWT token (default: JAMYPG_OPENMETADATA_TOKEN env)")
+	flag.BoolVar(&omSync, "openmetadata-sync", false, "On each scheduler tick, apply an incremental OpenMetadata import (gaps only). Requires -sync-interval")
+	flag.StringVar(&omScope, "openmetadata-scope", os.Getenv("JAMYPG_OPENMETADATA_SCOPE"), "Optional OpenMetadata database/schema FQN to scope scheduled imports")
 	flag.Parse()
 
 	if err := validateHTTPExposure(transport, addr, metaDSN, adminToken, publicMCP); err != nil {
@@ -157,9 +161,10 @@ func main() {
 		log.Printf("standalone mode (no meta db): login/users/MCP keys disabled; profiles from db_profiles.json")
 	}
 	log.Printf("admin console: http://%s/admin, API docs: http://%s/docs", addr, addr)
-	if syncInterval > 0 && (syncSource != "" || digestWebhook != "") {
+	if syncInterval > 0 {
 		srv.StartScheduler(context.Background(), mcp.SchedulerConfig{
 			Source: syncSource, Interval: syncInterval, WebhookURL: digestWebhook,
+			OpenMetadata: omSync, OpenMetadataScope: omScope,
 		})
 	}
 	if err := mcp.ServeServer(addr, srv); err != nil {

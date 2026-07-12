@@ -111,6 +111,11 @@ curl -s "http://127.0.0.1:9797/api/audit/verify?day=YYYYMMDD"   # 관리자
 다이제스트 JSON을 해당 URL로 POST합니다(Slack 등 알림 연동). `-sync-source`
 없이 웹훅만 설정해도 스케줄에 맞춰 다이제스트만 전송됩니다.
 
+`-openmetadata-sync`(+선택 `-openmetadata-scope`)를 켜면 매 틱마다 OpenMetadata
+증분 import를 반영합니다. 틱 실행 순서는 **DB sync → OpenMetadata import → 다이제스트
+웹훅**이며 설정된 단계만 동작합니다. 자세한 내용은
+[openmetadata.md](openmetadata.md)를 참고하세요.
+
 ## 데이터셋 운영
 
 일상 작업은 `/admin`(JSON)·`/admin/editor`(표) 사용 —
