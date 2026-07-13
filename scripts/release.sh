@@ -9,10 +9,15 @@ cd "$ROOT"
 D="dist/$V"; P="$D/pkg"
 mkdir -p "$P"
 
+# inject the release version (strip leading v) so the running server, MCP
+# serverInfo, and web UI all report exactly this tag — no manual const drift.
+VER="${V#v}"
+LDFLAGS="-s -w -X jamypg/internal/mcp.Version=$VER"
+
 for cmd in mcp eval goldgen; do
   for spec in "windows amd64 .exe" "linux amd64 " "linux arm64 "; do
     set -- $spec; goos=$1; goarch=$2; ext=${3:-}
-    CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags="-s -w" \
+    CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags="$LDFLAGS" \
       -o "$D/jamypg-$cmd-$goos-$goarch$ext" ./cmd/jamypg-$cmd
   done
 done
@@ -36,7 +41,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
 print("wrote", out)
 PY
 
-docker build -q -t "jamypg-mcp:$V" . >/dev/null
+docker build -q --build-arg VERSION="$VER" -t "jamypg-mcp:$V" . >/dev/null
 docker save "jamypg-mcp:$V" | gzip > "$P/jamypg-mcp-$V-docker.tar.gz"
 echo "saved docker image"
 

@@ -133,6 +133,12 @@ func (s *Service) LatestSnapshot(sourceID string) (*RawSnapshot, error) {
 	return s.latest(sourceID)
 }
 
+// Collect performs a one-shot physical collection WITHOUT storing a snapshot —
+// for live schema inspection (describe_db_schema) rather than change tracking.
+func (s *Service) Collect(ctx context.Context, req CollectRequest) (*RawSnapshot, error) {
+	return s.col.Collect(ctx, req)
+}
+
 // ---- storage ----
 
 func (s *Service) sourceDir(sourceID string) string {

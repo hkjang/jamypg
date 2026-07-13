@@ -28,8 +28,10 @@ import (
 const ProtocolVersion = "2025-06-18"
 
 // Version is the JAMYPG server version, surfaced in serverInfo, /auth/me, and
-// the web UI (sidebar footer).
-const Version = "0.35.0"
+// the web UI (sidebar footer). It is a var so release builds can inject the
+// git tag via -ldflags "-X jamypg/internal/mcp.Version=<v>", keeping the
+// reported version in lockstep with the release instead of drifting.
+var Version = "0.36.0"
 
 type Options struct {
 	Endpoint         string
@@ -438,6 +440,12 @@ func (s *Server) tools() []map[string]any {
 			"incremental":   boolSchema("true (default) → skip when the schema hash is unchanged; false → always snapshot and diff"),
 			"include_views": boolSchema("Collect views/materialized views and their SQL (default false)"),
 		}, []string{"source"})),
+		tool("describe_db_schema", "Introspect a connected DB profile's LIVE schema (information_schema) so you can generate SQL for tables that are not in the catalog. Catalog-first: tables/columns already registered are annotated with their logical names/descriptions, and each table is flagged in_catalog (true = curated metadata, false = live-only physical structure). Read-only, nothing persisted. Use it to ground SQL, then run_sql_safely/execute_with_repair(profile=...) to execute. To make live-only tables pass catalog validation, apply_metadata_sync them.", objectSchema(map[string]any{
+			"profile":       str("DB profile id to introspect"),
+			"schemas":       arrayOf("string", "Optional schema names to scope; omit for all non-system schemas"),
+			"table":         str("Optional single table (name or schema.table) to describe"),
+			"include_views": boolSchema("Include views/materialized views (default false)"),
+		}, []string{"profile"})),
 		tool("apply_metadata_sync", "ADMIN: reflect a source's latest collected snapshot into the operational catalog — merge the PHYSICAL model (columns, types, nullability, PK/FK, FK relations) into meta_physical_models.json / topology_relations.json (with backups) and hot-reload. Physical facts are auto-applied; existing column/table descriptions (business meaning) are PRESERVED; dropped tables/columns are retire candidates and are NOT removed unless prune=true. Run run_metadata_sync first to collect a snapshot.", objectSchema(map[string]any{
 			"source": str("metadata source id (db profile id) whose latest snapshot to apply"),
 			"prune":  boolSchema("true → also remove physical rows for tables/columns absent from the snapshot (within collected schemas); false (default) → keep them as retire candidates"),
@@ -670,6 +678,7 @@ var dbProfileTools = map[string]bool{
 	"discover_metadata":       true,
 	"run_metadata_sync":       true,
 	"profile_metadata_assets": true,
+	"describe_db_schema":      true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -891,6 +900,23 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		}
 		incremental := a.Incremental == nil || *a.Incremental
 		return s.mcpRunMetadataSync(ctx, a.Source, a.Schemas, incremental, a.IncludeViews), nil
+	case "describe_db_schema":
+		var a struct {
+			Profile      string   `json:"profile"`
+			Schemas      []string `json:"schemas"`
+			Table        string   `json:"table"`
+			IncludeViews bool     `json:"include_views"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Profile == "" {
+			return map[string]any{"status": "error", "error": "profile is required"}, nil
+		}
+		if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+			return map[string]any{"status": "forbidden", "error": err.Error()}, nil
+		}
+		return s.mcpDescribeDBSchema(ctx, a.Profile, a.Schemas, a.Table, a.IncludeViews), nil
 	case "apply_metadata_sync":
 		var a struct {
 			Source string `json:"source"`

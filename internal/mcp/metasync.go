@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -147,6 +148,85 @@ func snapshotToPhysical(snap *metasync.RawSnapshot) ([]catalog.PhysicalColumn, [
 		}
 	}
 	return cols, rels
+}
+
+// mcpDescribeDBSchema introspects a connected profile DB's live schema so the
+// LLM can generate SQL for tables that are not (yet) in the catalog. Catalog
+// business meaning takes precedence: tables/columns already in the catalog are
+// annotated with their logical names/descriptions, and each table is flagged
+// in_catalog so the model knows which have curated metadata vs raw physical
+// structure only. Read-only; nothing is persisted.
+func (s *Server) mcpDescribeDBSchema(ctx context.Context, sourceID string, schemas []string, table string, includeViews bool) map[string]any {
+	snap, err := s.metasyncService().Collect(ctx, metasync.CollectRequest{
+		SourceID: sourceID, Schemas: schemas, IncludeViews: includeViews,
+	})
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	cat := s.cat()
+	wantTable := strings.ToUpper(strings.TrimSpace(table))
+
+	tables := []map[string]any{}
+	liveOnly, inCatalog := 0, 0
+	for _, t := range snap.Tables {
+		fqn := t.Schema + "." + t.Name
+		if wantTable != "" && strings.ToUpper(t.Name) != wantTable && strings.ToUpper(fqn) != wantTable {
+			continue
+		}
+		ct, known := cat.ResolveTable(fqn)
+		if known {
+			inCatalog++
+		} else {
+			liveOnly++
+		}
+		cols := make([]map[string]any, 0, len(t.Columns))
+		for _, c := range t.Columns {
+			col := map[string]any{
+				"name": c.Name, "data_type": c.DataType, "nullable": c.Nullable,
+				"is_pk": c.IsPrimaryKey, "is_fk": c.IsForeignKey,
+			}
+			if c.Comment != "" {
+				col["comment"] = c.Comment
+			}
+			// catalog-first: attach curated business meaning when present
+			if known {
+				if cc := ct.ColumnMap[strings.ToUpper(c.Name)]; cc != nil {
+					if cc.LogicalName != "" {
+						col["logical_name"] = cc.LogicalName
+					}
+					if cc.Description != "" {
+						col["description"] = cc.Description
+					}
+				}
+			}
+			cols = append(cols, col)
+		}
+		entry := map[string]any{
+			"table": fqn, "kind": t.Kind, "in_catalog": known, "columns": cols,
+		}
+		if t.Comment != "" {
+			entry["comment"] = t.Comment
+		}
+		if known {
+			if ct.LogicalName != "" {
+				entry["logical_name"] = ct.LogicalName
+			}
+			if ct.Description != "" {
+				entry["description"] = ct.Description
+			}
+		}
+		tables = append(tables, entry)
+	}
+
+	return map[string]any{
+		"source":     sourceID,
+		"dialect":    snap.Dialect,
+		"tables":     tables,
+		"count":      len(tables),
+		"in_catalog": inCatalog,
+		"live_only":  liveOnly,
+		"note":       "카탈로그에 등록된 테이블/컬럼은 논리명·설명이 함께 제공됩니다(카탈로그 우선). in_catalog=false 는 프로파일 DB에만 있는 라이브 스키마입니다. 이를 근거로 SQL을 생성하고 run_sql_safely/execute_with_repair(profile=...)로 실행하세요. 라이브 전용 테이블을 카탈로그 검증까지 통과시키려면 apply_metadata_sync로 반영하세요.",
+	}
 }
 
 func (s *Server) mcpSyncStatus(sourceID string) map[string]any {

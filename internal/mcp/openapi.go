@@ -3,7 +3,7 @@ package mcp
 // openAPISpec documents the REST management API served under /api. It is
 // rendered by the embedded Swagger UI at /docs and downloadable at
 // /openapi.json. Keep it in sync with registerAdmin.
-const openAPISpec = `{
+var openAPISpec = `{
   "openapi": "3.0.3",
   "info": {
     "title": "JAMYPG NL2SQL MCP - Management & Query API",

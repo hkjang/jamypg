@@ -5,13 +5,17 @@
 
 FROM golang:1.26-alpine AS build
 WORKDIR /src
+# VERSION is injected into mcp.Version so the running server/UI report the
+# release tag. Pass with: docker build --build-arg VERSION=0.36.0 .
+ARG VERSION=dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/jamypg-mcp ./cmd/jamypg-mcp \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/jamypg-eval ./cmd/jamypg-eval \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/jamypg-goldgen ./cmd/jamypg-goldgen
+RUN LDFLAGS="-s -w -X jamypg/internal/mcp.Version=${VERSION}" \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="$LDFLAGS" -o /out/jamypg-mcp ./cmd/jamypg-mcp \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="$LDFLAGS" -o /out/jamypg-eval ./cmd/jamypg-eval \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="$LDFLAGS" -o /out/jamypg-goldgen ./cmd/jamypg-goldgen
 
 FROM alpine:3.21
 RUN adduser -D -u 10001 jamypg

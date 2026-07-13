@@ -327,6 +327,27 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		incremental := req.Incremental == nil || *req.Incremental
 		writeJSON(w, http.StatusOK, s.mcpRunMetadataSync(r.Context(), req.Source, req.Schemas, incremental, req.IncludeViews))
 	})
+	mux.HandleFunc("POST /api/metadata/describe", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Profile      string   `json:"profile"`
+			Schemas      []string `json:"schemas"`
+			Table        string   `json:"table"`
+			IncludeViews bool     `json:"include_views"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.canUseProfileID(r.Context(), actor, req.Profile); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.mcpDescribeDBSchema(r.Context(), req.Profile, req.Schemas, req.Table, req.IncludeViews))
+	})
 	mux.HandleFunc("POST /api/metadata/apply", func(w http.ResponseWriter, r *http.Request) {
 		// applying a snapshot mutates the operational catalog → admin only
 		if !s.requireAdmin(w, r) {
