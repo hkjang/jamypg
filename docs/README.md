@@ -17,6 +17,7 @@ SQL(PostgreSQL·MySQL·MariaDB)로 변환하도록 돕는 **Text2SQL MCP 서버*
 | [db-connector.md](db-connector.md) | 운영자, DBA | DB 실행 커넥터: PostgreSQL/MySQL/MariaDB 순수 Go 드라이버, DB 프로파일, 실행 파이프라인, 장애 대응, 메트릭 |
 | [metadata-sync.md](metadata-sync.md) | 운영자, 데이터 관리자 | 자동 메타데이터 수집(Phase 1-2): 물리 자동 수집·스냅숏·구조 해시·증분 변경감지, 스냅숏→카탈로그 자동 반영, read-only 카탈로그 접근, MCP/REST 인터페이스 |
 | [profile-catalogs.md](profile-catalogs.md) | 운영자, 데이터 관리자 | DB 프로파일별 카탈로그 워크스페이스: 프로파일마다 독립 메타데이터 JSON을 라이브 DB로 구축·조회·관리(`list/get/build_profile_catalog`, `get/put_profile_dataset`) |
+| [onboarding.md](onboarding.md) | 신규 사용자 | 빠른 시작 온보딩 가이드 — 관리 콘솔 좌측 **📖 온보딩 가이드**로 화면 모달에서도 동일 내용 제공 |
 | [metadata-quality.md](metadata-quality.md) | 메타데이터 품질 점수(A–E)와 릴리스 차단 게이트 |
 | [metadata-enrich.md](metadata-enrich.md) | 운영자, 데이터 관리자, LLM 통합 | 규칙 기반 의미 메타데이터 보강(Phase 5): 논리명·의미타입·설명 **검토 후보** 생성, 근거·신뢰도, overrides.json 스니펫, `suggest_semantic_metadata` |
 | [metadata-candidates.md](metadata-candidates.md) | 운영자, 데이터 관리자, LLM 통합 | 규칙 기반 모델 후보(Phase 6): 코드사전·지표·관계 **검토 후보** 생성, `suggest_model_candidates` |

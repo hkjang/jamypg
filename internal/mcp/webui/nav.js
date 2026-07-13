@@ -36,12 +36,85 @@
       { key: 'keys',     href: '/admin/keys',     icon: '🔑', label: 'MCP 키',   show: 'auth' },
     ]},
     { title: '문서', items: [
+      { key: 'onboarding', icon: '📖', label: '온보딩 가이드', show: 'always', onboarding: true },
       { key: 'docs',     href: '/docs',   icon: '📘', label: 'API 문서', show: 'always', target: '_blank' },
     ]},
   ];
 
+  // Per-page user guides, rendered on demand in a modal via the header
+  // "❓ 가이드" button. Keyed by the page key passed to JASQL.mount({page}).
+  var GUIDES = {
+    ask: '## 질의 (NL2SQL)\n\n자연어 질문으로 SQL을 만들고 실행합니다.\n\n1. 질문을 입력하면 **prepare_sql_context**가 테이블·컬럼·조인·시간조건·검증 힌트를 한 번에 묶어 줍니다.\n2. 응답이 **재질문(needs_clarification)** 이면 제시된 질문에 답한 뒤 다시 실행하세요.\n3. `ready`가 되면 스켈레톤의 `/* SLOT */`만 채워 SQL을 완성합니다.\n4. **검증 → 실행계획 → 실행** 순서로 진행합니다.\n\n> 팁: 특정 DB 프로파일의 카탈로그로 질의하려면 profile을 지정하세요(멀티 DB).',
+    datasets: '## 데이터셋\n\n카탈로그를 구성하는 JSON 데이터셋(물리/논리 모델, 관계, 용어집, 지표, 코드사전, 오버라이드 등)을 조회·교체·복원합니다.\n\n- 각 파일은 교체 시 **자동 백업**되고 카탈로그가 **핫스왑**됩니다(재기동 불필요).\n- 컴파일 실패 시 **자동 롤백**됩니다.\n- 편집은 **테이블 편집** 화면 또는 파일 직접 업로드로 합니다.',
+    editor: '## 테이블 편집\n\n물리/논리 모델과 컬럼 메타데이터(논리명·설명·PII·코드사전)를 표 형태로 편집합니다. 저장 시 검증·백업 후 반영됩니다.',
+    db: '## DB · 쿼리\n\nDB 접속 **프로파일**(postgres/mysql/mariadb)을 등록·테스트하고, read-only로 쿼리를 실행합니다.\n\n- 모든 실행은 **읽기 전용 세션**으로 강제되고, 행 제한·타임아웃·PII 마스킹·감사 로그가 적용됩니다.\n- 실행 전 **실행계획 게이트**가 위험 쿼리를 차단합니다.\n- 프로파일 정책에 **비용 상한**(max_plan_cost/rows)을 두면 초과 쿼리를 하드 차단합니다.',
+    reviews: '## 메타 검토\n\n규칙 엔진·OpenMetadata가 만든 **후보**(논리명·의미타입·설명·코드사전·지표·관계)를 승인/반려합니다.\n\n1. 상태(대기/승인/반려)·종류로 필터해 검토합니다.\n2. 행별 또는 일괄로 승인/반려하고 검토자·메모를 남깁니다.\n3. **승인분 반영 + 리로드**로 overrides/metrics/relations에 병합합니다(백업·기존값 보존).',
+    quality: '## 메타 품질\n\n테이블별 메타데이터 품질을 7차원(완전성·일관성·관계성·프로파일링·지표연결·사용성·보안성)으로 채점하고 A–E 등급·릴리스 게이트를 보여줍니다.\n\n- **게이트 차단** 항목(지표/조인 손상, PII 미분류, 품질 하한 미달)을 먼저 해소하세요.\n- 하단에서 **감사 로그 해시 체인 무결성**을 검증할 수 있습니다.',
+    openmetadata: '## OpenMetadata 연동\n\n전사 카탈로그 OpenMetadata와 양방향 연동합니다.\n\n- **연결 설정**: URL/토큰을 저장(무재기동, `<data>/openmetadata.json`).\n- **Import**: 설명·PII·용어집을 **빈 필드에만** 후보로 가져오기(미리보기 → 반영).\n- **Export**: jamypg 설명을 OM의 빈 컬럼에 push.\n- **Drift**: 두 카탈로그의 불일치(gap/conflict) 대조.',
+    profcat: '## 프로파일 카탈로그\n\n등록된 DB 프로파일마다 **독립 카탈로그 워크스페이스**(`<data>/profiles/<profile>/`)를 관리합니다.\n\n1. **라이브 DB로 구축/갱신** — 물리 모델을 워크스페이스에 수집(기존 설명 보존).\n2. **전체 구축** — 모든 프로파일 일괄 구축.\n3. 데이터셋 JSON을 조회·편집(검증·백업·롤백).\n4. **활성 카탈로그로 전환** — 무재기동 핫스왑(단독 모드).\n\n> 요청 단위로 `profile`을 지정하면 전역 전환 없이 그 워크스페이스로 질의·검증됩니다(멀티 DB).',
+    stats: '## 통계\n\nMCP 도구 호출량·지연·오류율과 최근 추이를 봅니다. Prometheus 지표는 `/metrics`에서 제공됩니다.',
+    history: '## 내 이력\n\n내가 실행한 질의·도구 호출 이력을 조회합니다(관리자는 전체/사용자 필터).',
+    users: '## 사용자 (관리자)\n\n로컬 계정·역할을 관리합니다. admin 역할이 전체 관리 권한을 가집니다.',
+    keys: '## MCP 키\n\nMCP 클라이언트 인증용 API 키(jsk_...)를 발급·회전·폐기합니다.',
+    settings: '## 서버 설정 (관리자)\n\n마스터 토큰·허용 Origin·Keycloak SSO를 메타 DB에 저장하고 즉시 적용합니다.',
+  };
+
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+
+  // mdToHtml: minimal, safe Markdown → HTML (headings, lists, code, bold,
+  // inline code, links, paragraphs). Input is escaped first, so it is XSS-safe.
+  function mdToHtml(md) {
+    var lines = String(md || '').split('\n');
+    var html = '', inUl = false, inCode = false;
+    var inline = function (t) {
+      return esc(t)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    };
+    lines.forEach(function (ln) {
+      if (/^```/.test(ln)) { if (inCode) { html += '</pre>'; inCode = false; } else { if (inUl) { html += '</ul>'; inUl = false; } html += '<pre>'; inCode = true; } return; }
+      if (inCode) { html += esc(ln) + '\n'; return; }
+      var m;
+      if ((m = ln.match(/^(#{1,4})\s+(.*)/))) { if (inUl) { html += '</ul>'; inUl = false; } html += '<h' + (m[1].length + 2) + '>' + inline(m[2]) + '</h' + (m[1].length + 2) + '>'; return; }
+      if ((m = ln.match(/^\s*[-*]\s+(.*)/))) { if (!inUl) { html += '<ul>'; inUl = true; } html += '<li>' + inline(m[1]) + '</li>'; return; }
+      if ((m = ln.match(/^\s*\d+\.\s+(.*)/))) { if (!inUl) { html += '<ul>'; inUl = true; } html += '<li>' + inline(m[1]) + '</li>'; return; }
+      if ((m = ln.match(/^>\s?(.*)/))) { if (inUl) { html += '</ul>'; inUl = false; } html += '<blockquote>' + inline(m[1]) + '</blockquote>'; return; }
+      if (ln.trim() === '') { if (inUl) { html += '</ul>'; inUl = false; } return; }
+      if (inUl) { html += '</ul>'; inUl = false; }
+      html += '<p>' + inline(ln) + '</p>';
+    });
+    if (inUl) html += '</ul>';
+    if (inCode) html += '</pre>';
+    return html;
+  }
+
+  // guideModal renders markdown in a scrollable read-only modal.
+  function guideModal(title, md) {
+    var host = document.createElement('div');
+    host.className = 'jmodal';
+    host.innerHTML = '<div class="box guidebox"><div class="ghead"><h3>' + esc(title) +
+      '</h3><button type="button" class="jb" data-x>닫기</button></div><div class="gbody">' +
+      mdToHtml(md) + '</div></div>';
+    document.body.appendChild(host);
+    var close = function () { host.remove(); };
+    host.addEventListener('click', function (e) { if (e.target === host) close(); });
+    host.querySelector('[data-x]').onclick = close;
+    document.addEventListener('keydown', function esc2(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc2); } });
+    requestAnimationFrame(function () { host.classList.add('open'); });
+  }
+
+  function openOnboarding() {
+    guideModal('jamypg 온보딩 가이드', '불러오는 중…');
+    fetch('/admin/onboarding.md').then(function (r) { return r.text(); }).then(function (md) {
+      var body = document.querySelector('.jmodal.open .gbody');
+      if (body) body.innerHTML = mdToHtml(md);
+    }).catch(function () {
+      var body = document.querySelector('.jmodal.open .gbody');
+      if (body) body.innerHTML = '<p>온보딩 문서를 불러오지 못했습니다.</p>';
+    });
+  }
 
   function injectStyles() {
     if (document.getElementById('jasql-shell-style')) return;
@@ -102,6 +175,20 @@
       '.jmodal .jb.primary{background:#2563eb;border-color:#2563eb;color:#fff;font-weight:600;}',
       '.jmodal .msg{font-size:12.5px;margin-top:10px;min-height:16px;}',
       '.jmodal .msg.ok{color:#15803d;} .jmodal .msg.bad{color:#b91c1c;}',
+      // help button + guide modal
+      'button.jhelp{background:#1d2b47;border:1px solid #35507f;color:#cfe0ff;border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer;margin-left:6px;}',
+      'button.jhelp:hover{background:#26375a;}',
+      '.jmodal .box.guidebox{width:min(760px,94vw);max-height:86vh;display:flex;flex-direction:column;padding:0;}',
+      '.jmodal .guidebox .ghead{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #eef1f5;position:sticky;top:0;background:#fff;border-radius:14px 14px 0 0;}',
+      '.jmodal .guidebox .ghead h3{margin:0;}',
+      '.jmodal .guidebox .gbody{padding:8px 22px 22px;overflow-y:auto;font-size:14px;line-height:1.7;}',
+      '.jmodal .gbody h2{font-size:16px;margin:16px 0 8px;} .jmodal .gbody h3{font-size:14px;margin:14px 0 6px;} .jmodal .gbody h4{font-size:13px;margin:12px 0 4px;}',
+      '.jmodal .gbody p{margin:8px 0;} .jmodal .gbody ul{margin:8px 0 8px 4px;padding-left:20px;} .jmodal .gbody li{margin:3px 0;}',
+      '.jmodal .gbody code{background:#f0f3f8;border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;}',
+      '.jmodal .gbody pre{background:#0d1626;color:#dbe6ff;border-radius:10px;padding:12px 14px;overflow-x:auto;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;}',
+      '.jmodal .gbody pre code{background:none;padding:0;color:inherit;}',
+      '.jmodal .gbody blockquote{margin:8px 0;padding:6px 12px;border-left:3px solid #2563eb;background:#f2f6ff;color:#334;border-radius:0 6px 6px 0;}',
+      '.jmodal .gbody a{color:#2563eb;}',
     ].join('\n');
     document.head.appendChild(st);
   }
@@ -130,6 +217,11 @@
       if (!items.length) return;
       html += '<div class="jgrp">' + esc(g.title) + '</div>';
       items.forEach(function (it) {
+        if (it.onboarding) {
+          html += '<a class="jlink" href="#" data-onboarding="1">' +
+            '<span class="ic">' + it.icon + '</span><span>' + esc(it.label) + '</span></a>';
+          return;
+        }
         html += '<a class="jlink' + (it.key === cur ? ' active' : '') + '" href="' + it.href + '"' +
           (it.target ? ' target="' + it.target + '"' : '') + '>' +
           '<span class="ic">' + it.icon + '</span><span>' + esc(it.label) + '</span></a>';
@@ -140,6 +232,8 @@
     html += '<div class="jfoot">jamypg ' + esc(ver) + (authed ? '' : ' · 단독 모드') + '</div>';
     aside.innerHTML = html;
     document.body.appendChild(aside);
+    var ob = aside.querySelector('[data-onboarding]');
+    if (ob) ob.onclick = function (e) { e.preventDefault(); document.body.classList.remove('jsb-open'); openOnboarding(); };
 
     // mobile hamburger + scrim
     var toggle = document.createElement('button');
@@ -150,6 +244,26 @@
     scrim.className = 'jsb-scrim';
     scrim.onclick = function () { document.body.classList.remove('jsb-open'); };
     document.body.appendChild(scrim);
+  }
+
+  // buildHelp adds a "❓ 가이드" button to the page header that opens this
+  // page's guide modal. Also exposes JASQL.guide() for pages to call directly.
+  function buildHelp() {
+    var md = GUIDES[window.JASQL.page];
+    if (!md) return;
+    var header = document.querySelector('header');
+    if (!header) return;
+    if (!header.querySelector('.grow')) {
+      var grow = document.createElement('span'); grow.className = 'grow'; grow.style.flex = '1';
+      header.appendChild(grow);
+    }
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'jhelp'; btn.textContent = '❓ 가이드';
+    btn.onclick = function () {
+      var link = (window.JASQL.pageLabel || window.JASQL.page || '') + ' 가이드';
+      guideModal(link, md);
+    };
+    header.appendChild(btn);
   }
 
   function buildProfileMenu(me) {
@@ -278,9 +392,13 @@
 
   window.JASQL = {
     page: null,
+    guide: guideModal,
+    onboarding: openOnboarding,
     async mount(opts) {
       opts = opts || {};
       this.page = opts.page || null;
+      this.pageLabel = opts.label || null;
+      if (opts.guide) GUIDES[this.page] = opts.guide; // page-supplied override
       injectStyles();
       var me = { auth_enabled: false };
       try { me = await (await fetch('/auth/me')).json(); } catch (e) { /* standalone fallback */ }
@@ -290,6 +408,7 @@
       }
       window.AUTH = me.auth_enabled && me.authenticated ? me : null;
       buildSidebar(me);
+      buildHelp();
       if (me.auth_enabled && me.authenticated) buildProfileMenu(me);
       handleTokenBox(!!me.auth_enabled);
       if (typeof opts.onReady === 'function') {
