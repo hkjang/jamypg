@@ -34,6 +34,7 @@ func main() {
 		oidcRedirect   string
 		syncSource     string
 		syncInterval   time.Duration
+		syncApply      bool
 		digestWebhook  string
 		omURL          string
 		omToken        string
@@ -58,6 +59,7 @@ func main() {
 	flag.StringVar(&oidcRedirect, "oidc-redirect-url", os.Getenv("JAMYPG_OIDC_REDIRECT_URL"), "OIDC redirect URL, e.g. https://host:9797/auth/sso/callback")
 	flag.StringVar(&syncSource, "sync-source", os.Getenv("JAMYPG_SYNC_SOURCE"), "DB profile id to auto-sync metadata from on a schedule (with -sync-interval)")
 	flag.DurationVar(&syncInterval, "sync-interval", 0, "Interval for the scheduler (e.g. 24h); 0 disables. Drives -sync-source and/or -digest-webhook")
+	flag.BoolVar(&syncApply, "sync-apply", false, "On each scheduled sync, auto-apply the collected physical model to the catalog (retire candidates kept). Requires -sync-source")
 	flag.StringVar(&digestWebhook, "digest-webhook", os.Getenv("JAMYPG_DIGEST_WEBHOOK"), "URL to POST the metadata digest JSON to on each scheduler tick (with -sync-interval)")
 	flag.StringVar(&omURL, "openmetadata-url", os.Getenv("JAMYPG_OPENMETADATA_URL"), "OpenMetadata base URL (e.g. http://host:8585) to import/export metadata")
 	flag.StringVar(&omToken, "openmetadata-token", os.Getenv("JAMYPG_OPENMETADATA_TOKEN"), "OpenMetadata bot JWT token (default: JAMYPG_OPENMETADATA_TOKEN env)")
@@ -164,7 +166,7 @@ func main() {
 	if syncInterval > 0 {
 		srv.StartScheduler(context.Background(), mcp.SchedulerConfig{
 			Source: syncSource, Interval: syncInterval, WebhookURL: digestWebhook,
-			OpenMetadata: omSync, OpenMetadataScope: omScope,
+			OpenMetadata: omSync, OpenMetadataScope: omScope, ApplySync: syncApply,
 		})
 	}
 	if err := mcp.ServeServer(addr, srv); err != nil {

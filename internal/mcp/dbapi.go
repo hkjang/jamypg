@@ -327,6 +327,22 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		incremental := req.Incremental == nil || *req.Incremental
 		writeJSON(w, http.StatusOK, s.mcpRunMetadataSync(r.Context(), req.Source, req.Schemas, incremental, req.IncludeViews))
 	})
+	mux.HandleFunc("POST /api/metadata/apply", func(w http.ResponseWriter, r *http.Request) {
+		// applying a snapshot mutates the operational catalog → admin only
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		var req struct {
+			Source string `json:"source"`
+			Prune  bool   `json:"prune"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		res := s.mcpApplyMetadataSync(req.Source, req.Prune)
+		s.adminAudit(r, "metadata.apply", req.Source, nil)
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("GET /api/metadata/snapshots/{source}", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)
 		if !ok {

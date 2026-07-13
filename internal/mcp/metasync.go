@@ -3,7 +3,9 @@ package mcp
 import (
 	"context"
 	"sync"
+	"time"
 
+	"jamypg/internal/catalog"
 	"jamypg/internal/metasync"
 )
 
@@ -83,6 +85,68 @@ func (s *Server) mcpRunMetadataSync(ctx context.Context, sourceID string, schema
 	}
 	out["principle"] = "물리 구조는 스냅숏으로 자동 수집되었습니다. 삭제는 즉시 반영되지 않고 폐기 후보로 표시되며, 업무 의미 보강은 별도 승인 워크플로에서 처리됩니다."
 	return out
+}
+
+// mcpApplyMetadataSync reflects a source's latest collected snapshot into the
+// catalog dataset files (physical model + FK relations) and reloads. ADMIN
+// ONLY — the caller enforces authorization. Physical facts are auto-applied;
+// business descriptions are preserved; deletions are retire candidates unless
+// prune=true.
+func (s *Server) mcpApplyMetadataSync(sourceID string, prune bool) map[string]any {
+	snap, err := s.metasyncService().LatestSnapshot(sourceID)
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	if snap == nil {
+		return map[string]any{"error": "no snapshot for source " + sourceID + "; run run_metadata_sync first"}
+	}
+
+	cols, rels := snapshotToPhysical(snap)
+	res := s.cat().ApplyPhysicalSnapshot(cols, rels, prune, sourceID, time.Now())
+	res["snapshot_id"] = snap.SnapshotID
+	if errMsg, _ := res["error"].(string); errMsg != "" {
+		return res
+	}
+	if reload, rerr := s.reloadCatalog(); rerr == nil {
+		res["reloaded"] = reload
+	} else {
+		res["reload_error"] = rerr.Error()
+	}
+	return res
+}
+
+// snapshotToPhysical flattens a raw snapshot into neutral physical columns +
+// FK relations for the catalog apply layer.
+func snapshotToPhysical(snap *metasync.RawSnapshot) ([]catalog.PhysicalColumn, []catalog.RelationUpsert) {
+	var cols []catalog.PhysicalColumn
+	var rels []catalog.RelationUpsert
+	for _, t := range snap.Tables {
+		for _, col := range t.Columns {
+			length := col.FullType
+			cols = append(cols, catalog.PhysicalColumn{
+				Schema: t.Schema, Table: t.Name, Column: col.Name, Ordinal: col.Ordinal,
+				DataType: col.DataType, LengthPrecision: length, Nullable: col.Nullable,
+				IsPK: col.IsPrimaryKey, IsFK: col.IsForeignKey, Comment: col.Comment,
+			})
+		}
+		for _, cons := range t.Constraints {
+			if cons.Type != "FOREIGN KEY" || len(cons.Columns) == 0 || len(cons.RefColumns) == 0 {
+				continue
+			}
+			// pair base/ref columns positionally
+			for i := range cons.Columns {
+				refCol := cons.RefColumns[0]
+				if i < len(cons.RefColumns) {
+					refCol = cons.RefColumns[i]
+				}
+				rels = append(rels, catalog.RelationUpsert{
+					BaseSchema: t.Schema, BaseTable: t.Name, BaseColumn: cons.Columns[i],
+					RefSchema: cons.RefSchema, RefTable: cons.RefTable, RefColumn: refCol,
+				})
+			}
+		}
+	}
+	return cols, rels
 }
 
 func (s *Server) mcpSyncStatus(sourceID string) map[string]any {

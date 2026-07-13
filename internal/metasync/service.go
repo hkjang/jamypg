@@ -127,6 +127,12 @@ func (s *Service) GetSnapshot(sourceID, id string) (*RawSnapshot, error) {
 	return s.load(sourceID, id)
 }
 
+// LatestSnapshot returns the most recent full stored snapshot for a source, or
+// nil if none exist.
+func (s *Service) LatestSnapshot(sourceID string) (*RawSnapshot, error) {
+	return s.latest(sourceID)
+}
+
 // ---- storage ----
 
 func (s *Service) sourceDir(sourceID string) string {

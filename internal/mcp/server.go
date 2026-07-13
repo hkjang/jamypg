@@ -438,6 +438,10 @@ func (s *Server) tools() []map[string]any {
 			"incremental":   boolSchema("true (default) → skip when the schema hash is unchanged; false → always snapshot and diff"),
 			"include_views": boolSchema("Collect views/materialized views and their SQL (default false)"),
 		}, []string{"source"})),
+		tool("apply_metadata_sync", "ADMIN: reflect a source's latest collected snapshot into the operational catalog — merge the PHYSICAL model (columns, types, nullability, PK/FK, FK relations) into meta_physical_models.json / topology_relations.json (with backups) and hot-reload. Physical facts are auto-applied; existing column/table descriptions (business meaning) are PRESERVED; dropped tables/columns are retire candidates and are NOT removed unless prune=true. Run run_metadata_sync first to collect a snapshot.", objectSchema(map[string]any{
+			"source": str("metadata source id (db profile id) whose latest snapshot to apply"),
+			"prune":  boolSchema("true → also remove physical rows for tables/columns absent from the snapshot (within collected schemas); false (default) → keep them as retire candidates"),
+		}, []string{"source"})),
 		tool("get_sync_status", "List stored metadata snapshots for a source (newest first) with collection time, schema hash, and object counts. Use the snapshot ids with diff_metadata_snapshots.", objectSchema(map[string]any{
 			"source": str("metadata source id (db profile id)"),
 		}, []string{"source"})),
@@ -614,6 +618,7 @@ func annotateTools(list []map[string]any) []map[string]any {
 		"import_openmetadata":            {destructive: true, idempotent: true},   // merges external metadata (apply=true)
 		"export_to_openmetadata":         {destructive: true, idempotent: true},   // writes to OpenMetadata (dry_run=false)
 		"export_lineage_to_openmetadata": {destructive: true, idempotent: true},   // writes lineage to OpenMetadata
+		"apply_metadata_sync":            {destructive: true, idempotent: true},   // merges physical model into catalog
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -649,6 +654,7 @@ var adminOnlyTools = map[string]bool{
 	"import_openmetadata":            true,
 	"export_to_openmetadata":         true,
 	"export_lineage_to_openmetadata": true,
+	"apply_metadata_sync":            true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -885,6 +891,15 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		}
 		incremental := a.Incremental == nil || *a.Incremental
 		return s.mcpRunMetadataSync(ctx, a.Source, a.Schemas, incremental, a.IncludeViews), nil
+	case "apply_metadata_sync":
+		var a struct {
+			Source string `json:"source"`
+			Prune  bool   `json:"prune"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.mcpApplyMetadataSync(a.Source, a.Prune), nil
 	case "get_sync_status":
 		var a struct {
 			Source string `json:"source"`

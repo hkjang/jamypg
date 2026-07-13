@@ -20,6 +20,7 @@ type SchedulerConfig struct {
 	WebhookURL        string        // optional: POST the digest here each tick
 	OpenMetadata      bool          // optional: import from OpenMetadata each tick
 	OpenMetadataScope string        // optional scope FQN for the import
+	ApplySync         bool          // optional: auto-apply the sync snapshot to the catalog
 }
 
 func (c SchedulerConfig) enabled() bool {
@@ -50,7 +51,7 @@ func (s *Server) StartScheduler(ctx context.Context, cfg SchedulerConfig) {
 				return
 			case <-t.C:
 				if cfg.Source != "" {
-					s.runScheduledSync(ctx, cfg.Source)
+					s.runScheduledSync(ctx, cfg.Source, cfg.ApplySync)
 				}
 				if cfg.OpenMetadata {
 					s.runScheduledOMImport(ctx, cfg.OpenMetadataScope)
@@ -91,7 +92,7 @@ func (s *Server) runScheduledOMImport(ctx context.Context, scope string) {
 	})
 }
 
-func (s *Server) runScheduledSync(ctx context.Context, source string) {
+func (s *Server) runScheduledSync(ctx context.Context, source string, applySync bool) {
 	// bound each run so a stuck DB cannot wedge the ticker goroutine
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -111,15 +112,27 @@ func (s *Server) runScheduledSync(ctx context.Context, source string) {
 	}
 	skipped, _ := res["skipped"].(bool)
 
+	// auto-apply the physical model to the catalog (retire candidates kept).
+	applied := ""
+	if applySync && !skipped {
+		ar := s.mcpApplyMetadataSync(source, false)
+		if em, _ := ar["error"].(string); em != "" {
+			applied = "apply-failed: " + em
+		} else {
+			applied = "applied"
+		}
+	}
+
 	q := s.cat().QualityReport()
 	gate := s.cat().QualityGate()
-	log.Printf("scheduled sync[%s]: changes=%d skipped=%v quality=%.1f(%s) gate=%v",
-		source, changes, skipped, q.OverallScore, q.OverallGrade, gate.Pass)
+	log.Printf("scheduled sync[%s]: changes=%d skipped=%v apply=%q quality=%.1f(%s) gate=%v",
+		source, changes, skipped, applied, q.OverallScore, q.OverallGrade, gate.Pass)
 	s.appendAudit(map[string]any{
 		"ts": time.Now().Format(time.RFC3339Nano), "tool": "scheduler:sync",
 		"detail":        source,
 		"change_count":  changes,
 		"skipped":       skipped,
+		"applied":       applied,
 		"quality_score": q.OverallScore,
 		"gate_pass":     gate.Pass,
 	})
