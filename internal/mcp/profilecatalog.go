@@ -23,7 +23,7 @@ import (
 // profileCatalogDir returns the workspace directory for a profile id, kept
 // under the main dataset dir so it works in standalone mode.
 func (s *Server) profileCatalogDir(profileID string) string {
-	return filepath.Join(s.cat().DataDir, "profiles", sanitizeProfileID(profileID))
+	return filepath.Join(s.opDir(), "profiles", sanitizeProfileID(profileID))
 }
 
 // ensureWorkspaceScaffold creates the minimal required dataset files so
@@ -70,10 +70,11 @@ func (s *Server) listProfileCatalogs(ctx context.Context) map[string]any {
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}
+	activeDir := s.cat().DataDir
 	out := make([]map[string]any, 0, len(profs))
 	for _, p := range profs {
 		dir := s.profileCatalogDir(p.ID)
-		entry := map[string]any{"profile": p.ID, "name": p.Name, "type": p.Type, "workspace": false}
+		entry := map[string]any{"profile": p.ID, "name": p.Name, "type": p.Type, "workspace": false, "active": dir == activeDir}
 		if fi, err := os.Stat(filepath.Join(dir, "meta_physical_models.json")); err == nil {
 			entry["workspace"] = true
 			entry["built_at"] = fi.ModTime().UTC().Format(time.RFC3339)
@@ -200,4 +201,55 @@ func nonEmptyJSON(b []byte) string {
 		return "null"
 	}
 	return string(b)
+}
+
+// activeCatalogInfo reports which catalog is currently serving NL2SQL: the
+// default (boot -data) or a profile workspace. Operational side-channels
+// (profiles, audit, ...) always stay at the fixed operational dir regardless.
+func (s *Server) activeCatalogInfo() map[string]any {
+	activeDir := s.cat().DataDir
+	info := map[string]any{
+		"active_dir":      activeDir,
+		"operational_dir": s.opDir(),
+		"is_default":      activeDir == s.opDir(),
+	}
+	base := filepath.Join(s.opDir(), "profiles") + string(filepath.Separator)
+	if strings.HasPrefix(activeDir, base) {
+		info["active_profile"] = strings.TrimSuffix(strings.TrimPrefix(activeDir, base), string(filepath.Separator))
+	}
+	sum := s.cat().Summary()
+	info["tables"] = sum.TableCount
+	return info
+}
+
+// setActiveCatalog hot-swaps the NL2SQL catalog to a profile workspace (or back
+// to the default when profile is empty) WITHOUT a restart. Standalone only —
+// in meta-DB mode datasets are materialized from Postgres to the boot dir, so a
+// swap would fight the reload path. Operational data (DB profiles via s.DB and
+// s.opDir, audit, workspaces) is unaffected. ADMIN.
+func (s *Server) setActiveCatalog(profileID string) map[string]any {
+	if s.datasetsInDB() {
+		return map[string]any{"error": "메타 DB 모드에서는 활성 카탈로그 전환을 지원하지 않습니다(데이터셋이 Postgres에서 관리됨). 워크스페이스를 -data로 기동하세요."}
+	}
+	s.dataMu.Lock()
+	defer s.dataMu.Unlock()
+
+	dir := s.opDir()
+	label := "default"
+	if p := strings.TrimSpace(profileID); p != "" && !strings.EqualFold(p, "default") {
+		dir = s.profileCatalogDir(p)
+		if _, err := os.Stat(filepath.Join(dir, "meta_physical_models.json")); err != nil {
+			return map[string]any{"error": "프로파일 '" + p + "' 워크스페이스가 없습니다. build_profile_catalog로 먼저 생성하세요."}
+		}
+		label = p
+	}
+	cat, err := catalog.Load(dir)
+	if err != nil {
+		return map[string]any{"error": "카탈로그 로드 실패, 기존 카탈로그 유지: " + err.Error()}
+	}
+	s.setCatalog(cat)
+	res := s.activeCatalogInfo()
+	res["activated"] = label
+	res["note"] = "활성 NL2SQL 카탈로그를 전환했습니다(무재기동). DB 프로파일·감사 로그·워크스페이스는 운영 디렉터리에 그대로 유지됩니다. 재기동 시 -data 값으로 되돌아갑니다."
+	return res
 }

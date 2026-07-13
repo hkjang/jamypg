@@ -71,9 +71,11 @@
         <div class="row" style="justify-content:space-between">
           <h2 style="margin:0" id="detailTitle"></h2>
           <div class="row">
-            <input id="buildSchemas" placeholder="schemas (콤마, 선택)" style="border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12px;width:170px">
+            <span id="activeBadge"></span>
+            <input id="buildSchemas" placeholder="schemas (콤마, 선택)" style="border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12px;width:150px">
             <label class="mono" style="font-size:12px"><input type="checkbox" id="buildPrune"> prune</label>
             <button class="btn warn" id="buildBtn">라이브 DB로 구축/갱신</button>
+            <button class="btn primary" id="activateBtn">활성 카탈로그로 전환</button>
           </div>
         </div>
         <div id="summary" style="margin:8px 0 4px"></div>
@@ -131,6 +133,7 @@ function selectProfile(p){
   $('editorCard').style.display='none';
   fetch('/api/profile-catalogs/'+encodeURIComponent(p),{headers:headers()}).then(function(r){return r.json();}).then(function(d){
     $('detailCard').style.display=''; $('detailTitle').textContent=p;
+    refreshActiveBadge();
     if(!d.workspace){
       $('summary').innerHTML='<span class="empty">워크스페이스가 없습니다. 라이브 DB로 구축하세요.</span>';
       $('health').textContent=''; $('dsCard').style.display='none'; return;
@@ -175,6 +178,22 @@ function openEditor(p, name, editable){
     }).catch(function(e){flash(false,e.message);});
 }
 
+function refreshActiveBadge(){
+  fetch('/api/profile-catalogs/active',{headers:headers()}).then(function(r){return r.json();}).then(function(a){
+    var active = a.active_profile||(a.is_default?'(기본 -data)':'');
+    var isCur = (CUR && a.active_profile===CUR);
+    $('activeBadge').innerHTML = isCur? '<span class="pill ok">현재 활성</span>' : '<span class="pill no">활성: '+esc(active)+'</span>';
+  }).catch(function(){});
+}
+$('activateBtn').onclick=function(){
+  if(!CUR) return;
+  if(!confirm(CUR+' 워크스페이스를 활성 NL2SQL 카탈로그로 전환합니다(무재기동). 재기동 시 -data로 복귀합니다. 진행할까요?')) return;
+  fetch('/api/profile-catalogs/active',{method:'POST',headers:headers(true),body:JSON.stringify({profile:CUR})})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){var d=res.d;if(!res.ok||d.error){flash(false,d.error||'실패');return;}
+      flash(true,'활성 카탈로그 전환: '+(d.activated||'')); refreshActiveBadge(); loadList();
+    }).catch(function(e){flash(false,e.message);});
+};
 $('reload').onclick=loadList;
 $('buildBtn').onclick=function(){
   if(!CUR) return;

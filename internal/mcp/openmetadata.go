@@ -29,7 +29,7 @@ type omConfigFile struct {
 }
 
 func (s *Server) omConfigPath() string {
-	return filepath.Join(s.cat().DataDir, "openmetadata.json")
+	return filepath.Join(s.opDir(), "openmetadata.json")
 }
 
 // omConfig resolves the effective connection: the stored file wins over the

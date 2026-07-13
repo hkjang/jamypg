@@ -29,7 +29,7 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 			s.listProfilesMeta(w, r)
 			return
 		}
-		profiles, err := dbconn.LoadProfiles(s.cat().DataDir)
+		profiles, err := dbconn.LoadProfiles(s.opDir())
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, err)
 			return
@@ -79,7 +79,7 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		if !s.requireAdmin(w, r) {
 			return
 		}
-		profiles, err := dbconn.RemoveProfile(s.cat().DataDir, id)
+		profiles, err := dbconn.RemoveProfile(s.opDir(), id)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err)
 			return
@@ -620,7 +620,7 @@ func (s *Server) profileByID(r *http.Request, id string) (dbconn.Profile, error)
 	if s.authEnabled() {
 		return metaProfileStore{svc: s.Meta}.GetProfileByID(r.Context(), id)
 	}
-	return dbconn.GetProfile(s.cat().DataDir, id)
+	return dbconn.GetProfile(s.opDir(), id)
 }
 
 // listProfilesMeta returns the profiles visible to the actor with ownership
@@ -691,7 +691,7 @@ func (s *Server) upsertProfile(w http.ResponseWriter, r *http.Request, pathID st
 		}
 		p.ID = pathID
 	}
-	profiles, err := dbconn.UpsertProfile(s.cat().DataDir, p, create)
+	profiles, err := dbconn.UpsertProfile(s.opDir(), p, create)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err)
 		return
@@ -792,14 +792,10 @@ func (s *Server) upsertProfileMeta(w http.ResponseWriter, r *http.Request, pathI
 // saveProfiles persists via the dataset pipeline so the previous file is
 // backed up and dataset status stays coherent (standalone mode only).
 func (s *Server) saveProfiles(profiles []dbconn.Profile) error {
-	b, err := json.Marshal(profiles)
-	if err != nil {
-		return err
-	}
-	s.dataMu.Lock()
-	defer s.dataMu.Unlock()
-	_, err = s.putDatasetLocked("db_profiles", b, true)
-	return err
+	// the DB profile registry is operational (not part of the active catalog's
+	// NL2SQL datasets), so it persists to the fixed operational dir — surviving
+	// an active-catalog hot-swap to a profile workspace.
+	return dbconn.SaveProfiles(s.opDir(), profiles)
 }
 
 type errEmpty string

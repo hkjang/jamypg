@@ -180,6 +180,23 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/profile-catalogs", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.listProfileCatalogs(r.Context()))
 	})
+	mux.HandleFunc("GET /api/profile-catalogs/active", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, s.activeCatalogInfo())
+	})
+	mux.HandleFunc("POST /api/profile-catalogs/active", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		var req struct {
+			Profile string `json:"profile"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		res := s.setActiveCatalog(req.Profile)
+		s.adminAudit(r, "catalog.activate", req.Profile, nil)
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("GET /api/profile-catalogs/{profile}", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.getProfileCatalog(r.PathValue("profile")))
 	})

@@ -70,6 +70,21 @@ type Server struct {
 	auditMu         sync.Mutex             // serializes audit appends + hash chaining
 	auditTips       map[string]auditTipRec // audit file path → last {seq, hash}
 	metrics         *metricsRegistry       // in-memory Prometheus counters
+	// dataDir is the fixed operational data directory captured at boot. Unlike
+	// s.cat().DataDir (which follows the active catalog when it is hot-swapped
+	// to a profile workspace), operational side-channels — DB profile registry,
+	// audit log, metasync snapshots, OpenMetadata config, profile workspaces —
+	// stay pinned here so a catalog switch never relocates them.
+	dataDir string
+}
+
+// opDir returns the fixed operational data dir (falls back to the active
+// catalog's dir when unset, e.g. stdio construction).
+func (s *Server) opDir() string {
+	if s.dataDir != "" {
+		return s.dataDir
+	}
+	return s.cat().DataDir
 }
 
 // cat returns the current catalog; dataset tools swap it atomically so
@@ -114,6 +129,7 @@ func NewServer(c *catalog.Catalog, opts Options) *Server {
 	}
 	s := &Server{
 		Options:         opts,
+		dataDir:         c.DataDir,
 		DB:              dbconn.NewManager(c.DataDir),
 		sessions:        map[string]time.Time{},
 		events:          map[string]uint64{},
@@ -464,6 +480,10 @@ func (s *Server) tools() []map[string]any {
 			"dataset": str("dataset name to replace"),
 			"content": map[string]any{"description": "the full JSON content for the dataset file"},
 		}, []string{"profile", "dataset", "content"})),
+		tool("get_active_catalog", "Report which catalog is currently serving NL2SQL: the default (boot -data dir) or a hot-swapped profile workspace, plus the fixed operational dir (where DB profiles / audit / workspaces stay). Read-only.", objectSchema(map[string]any{}, nil)),
+		tool("set_active_catalog", "ADMIN: hot-swap the active NL2SQL catalog to a profile's workspace (or back to the default when profile is empty) WITHOUT restarting. Search / prepare_sql_context / validate then use that workspace's metadata. DB profiles, audit, and workspaces stay at the operational dir (unaffected). Standalone mode only; reverts to -data on restart.", objectSchema(map[string]any{
+			"profile": str("profile id to activate; empty or 'default' → the boot -data catalog"),
+		}, nil)),
 		tool("apply_metadata_sync", "ADMIN: reflect a source's latest collected snapshot into the operational catalog — merge the PHYSICAL model (columns, types, nullability, PK/FK, FK relations) into meta_physical_models.json / topology_relations.json (with backups) and hot-reload. Physical facts are auto-applied; existing column/table descriptions (business meaning) are PRESERVED; dropped tables/columns are retire candidates and are NOT removed unless prune=true. Run run_metadata_sync first to collect a snapshot.", objectSchema(map[string]any{
 			"source": str("metadata source id (db profile id) whose latest snapshot to apply"),
 			"prune":  boolSchema("true → also remove physical rows for tables/columns absent from the snapshot (within collected schemas); false (default) → keep them as retire candidates"),
@@ -647,6 +667,7 @@ func annotateTools(list []map[string]any) []map[string]any {
 		"apply_metadata_sync":            {destructive: true, idempotent: true},   // merges physical model into catalog
 		"build_profile_catalog":          {destructive: true, idempotent: true},   // builds a per-profile workspace
 		"put_profile_dataset":            {destructive: true, idempotent: false},  // writes a per-profile dataset
+		"set_active_catalog":             {destructive: true, idempotent: true},   // hot-swaps the active catalog
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -685,6 +706,7 @@ var adminOnlyTools = map[string]bool{
 	"apply_metadata_sync":            true,
 	"build_profile_catalog":          true,
 	"put_profile_dataset":            true,
+	"set_active_catalog":             true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -982,6 +1004,16 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.putProfileDataset(a.Profile, a.Dataset, a.Content), nil
+	case "get_active_catalog":
+		return s.activeCatalogInfo(), nil
+	case "set_active_catalog":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.setActiveCatalog(a.Profile), nil
 	case "apply_metadata_sync":
 		var a struct {
 			Source string `json:"source"`

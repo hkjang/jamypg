@@ -60,14 +60,32 @@ curl -s -X PUT http://127.0.0.1:9797/api/profile-catalogs/pg-prod/dataset/overri
   전 파일을 백업하며, 워크스페이스가 컴파일되지 않으면 자동 롤백합니다.
 - **권한**: 조회는 읽기 전용, 구축·쓰기는 관리자(+프로파일 ACL)만 가능합니다.
 
-## 활성 카탈로그로 승격
+## 활성 카탈로그 전환
 
-워크스페이스를 실제 NL2SQL 활성 카탈로그로 쓰려면 서버를 해당 디렉터리로
-기동합니다:
+### 무재기동 핫스왑 (`set_active_catalog`, 관리자·단독 모드)
+
+`set_active_catalog{profile}`(REST `POST /api/profile-catalogs/active`)로 재기동
+없이 활성 NL2SQL 카탈로그를 프로파일 워크스페이스로 전환합니다. 이후 검색·
+`prepare_sql_context`·검증이 그 워크스페이스 메타데이터를 사용합니다. `profile`을
+비우면 기본(`-data`) 카탈로그로 되돌립니다.
+
+```sh
+curl -s -X POST http://127.0.0.1:9797/api/profile-catalogs/active \
+  -H 'Content-Type: application/json' -d '{"profile":"pg-prod"}'    # 관리자
+curl -s http://127.0.0.1:9797/api/profile-catalogs/active           # 현재 활성 조회
+```
+
+**중요 — 운영 데이터는 고정**: 전환은 NL2SQL 카탈로그(테이블/검색/조인/검증)만
+바꿉니다. DB 프로파일 레지스트리·쿼리 실행(`run_sql_safely`)·감사 로그·프로파일
+워크스페이스는 부팅 시 `-data`에 고정된 **운영 디렉터리**에 그대로 남아 전환의
+영향을 받지 않습니다. 전환은 프로세스 메모리 상태이며 **재기동 시 `-data`로
+복귀**합니다. 데이터셋을 Postgres에서 관리하는 메타 DB 모드에서는 지원하지
+않습니다.
+
+### 영구 승격 (기동 시)
+
+전환을 영구화하려면 서버를 해당 워크스페이스로 기동합니다:
 
 ```sh
 go run ./cmd/jamypg-mcp -data ./data/metadb/profiles/pg-prod -addr 127.0.0.1:9797
 ```
-
-이렇게 하면 그 프로파일의 메타데이터가 전역 카탈로그가 되어 검색·SQL 생성·검증에
-그대로 쓰입니다.

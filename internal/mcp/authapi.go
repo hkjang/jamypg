@@ -573,7 +573,7 @@ func (s *Server) countAdmins(ctx context.Context) (int, error) {
 func (s *Server) mcpListProfiles(ctx context.Context) map[string]any {
 	profiles := []map[string]any{}
 	if !s.authEnabled() {
-		list, err := dbconn.LoadProfiles(s.cat().DataDir)
+		list, err := dbconn.LoadProfiles(s.opDir())
 		if err != nil {
 			return map[string]any{"error": err.Error()}
 		}
@@ -624,7 +624,7 @@ func (s *Server) mcpListProfiles(ctx context.Context) map[string]any {
 // db_profiles.json entries; auth mode applies owner/shared/grant checks.
 func (s *Server) usableProfiles(ctx context.Context) ([]dbconn.Profile, error) {
 	if !s.authEnabled() {
-		return dbconn.LoadProfiles(s.cat().DataDir)
+		return dbconn.LoadProfiles(s.opDir())
 	}
 	u := userFrom(ctx)
 	recs, err := s.Meta.Store.ListProfiles(ctx)

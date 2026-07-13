@@ -31,7 +31,7 @@ type auditTipRec struct {
 // returns an error (audit is best-effort side-channel) but preserves integrity
 // fields when it does write.
 func (s *Server) appendAudit(entry map[string]any) {
-	dir := filepath.Join(s.cat().DataDir, "audit")
+	dir := filepath.Join(s.opDir(), "audit")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
@@ -133,7 +133,7 @@ func (s *Server) VerifyAuditChain(day string) map[string]any {
 	if len(day) != 8 || strings.ContainsAny(day, "/\\.") {
 		return map[string]any{"error": "day must be YYYYMMDD"}
 	}
-	path := filepath.Join(s.cat().DataDir, "audit", "audit-"+day+".jsonl")
+	path := filepath.Join(s.opDir(), "audit", "audit-"+day+".jsonl")
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -16,7 +16,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(60종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(62종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -370,6 +370,7 @@ Invoke-RestMethod `
 - `get_profile_catalog` — 특정 프로파일 워크스페이스의 카탈로그 요약·데이터셋 인벤토리·헬스 조회
 - `build_profile_catalog` — **(관리자)** 프로파일의 **라이브 스키마로 워크스페이스 구축/갱신**(물리 모델을 프로파일 디렉터리에 기록, 기존 설명 보존·삭제는 폐기 후보)
 - `get_profile_dataset` / `put_profile_dataset` — 프로파일 워크스페이스의 개별 메타데이터 JSON(overrides·glossary·physical_models 등) 조회 / **(관리자)** 검증·백업·롤백과 함께 관리
+- `get_active_catalog` / `set_active_catalog` — 현재 NL2SQL이 쓰는 카탈로그(기본 `-data` vs 핫스왑된 프로파일 워크스페이스) 조회 / **(관리자)** **무재기동 전환**. DB 프로파일·감사·워크스페이스는 운영 디렉터리에 고정(전환 영향 없음), 단독 모드 전용·재기동 시 `-data`로 복귀
 - `get_sync_status` — 원천별 저장된 스냅숏 목록(최신순, 수집시각·스키마해시·객체수)
 - `diff_metadata_snapshots` — 두 스냅숏 간 변경분(테이블/컬럼 추가·삭제, 타입/Null/키/코멘트/인덱스/뷰SQL 변경, 각각 심각도·처리방침) 계산
 - `profile_metadata_assets` — 컬럼 통계(행수·Null비율·distinct·min/max·상위값·포맷패턴)를 비용 제어(모드별 샘플: fast 2k / standard 100k / deep 전체)·**개인정보 보호형**(민감 컬럼은 원본값·min/max·상위값 미저장, 길이·패턴·건수만)으로 계산. 결과는 검토 후보이며 운영 카탈로그(column_stats)에 자동 반영하지 않음

@@ -21,7 +21,7 @@ var (
 )
 
 func (s *Server) metasyncService() *metasync.Service {
-	dir := s.cat().DataDir
+	dir := s.opDir()
 	metaSyncMu.Lock()
 	defer metaSyncMu.Unlock()
 	if metaSyncSvc == nil || metaSyncDir != dir {
