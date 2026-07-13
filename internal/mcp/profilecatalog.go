@@ -213,6 +213,31 @@ func (s *Server) buildAllProfileCatalogs(ctx context.Context, profiles []string,
 	}
 }
 
+// omImportToProfile imports OpenMetadata's curated business metadata into a
+// specific profile's catalog workspace (not the global catalog) — so each
+// database's descriptions/PII/glossary land in that database's own workspace.
+// apply=false previews; apply=true merges into the workspace (gaps only,
+// existing values preserved). ADMIN.
+func (s *Server) omImportToProfile(ctx context.Context, profileID, scope string, apply bool) map[string]any {
+	imp, fetched, err := s.omBuildImport(ctx, scope, 0, true)
+	if err != nil {
+		return map[string]any{"error": "openmetadata fetch failed: " + err.Error()}
+	}
+	dir := s.profileCatalogDir(profileID)
+	if err := ensureWorkspaceScaffold(dir); err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	pc, err := catalog.Load(dir)
+	if err != nil {
+		return map[string]any{"error": "workspace load failed: " + err.Error()}
+	}
+	res := pc.ImportExternalMetadata(imp, apply, time.Now())
+	res["profile"] = profileID
+	res["fetched_tables"] = fetched
+	res["target"] = "profile-workspace"
+	return res
+}
+
 // getProfileDataset returns one dataset JSON file's raw content from a
 // profile's workspace.
 func (s *Server) getProfileDataset(profileID, name string) map[string]any {

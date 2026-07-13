@@ -480,6 +480,11 @@ func (s *Server) tools() []map[string]any {
 			"dataset": str("dataset name to replace"),
 			"content": map[string]any{"description": "the full JSON content for the dataset file"},
 		}, []string{"profile", "dataset", "content"})),
+		tool("import_openmetadata_to_profile", "ADMIN: import OpenMetadata's curated business metadata (display names → logical names, descriptions, PII tags, glossary) into a specific profile's catalog WORKSPACE (not the global catalog) — so each database's business metadata comes from OpenMetadata into that database's own workspace. Gaps only; existing workspace values preserved. apply=false previews, apply=true merges. Build the workspace first (build_profile_catalog).", objectSchema(map[string]any{
+			"profile": str("DB profile id whose workspace to import into"),
+			"scope":   str("OpenMetadata database/schema FQN to scope; omit for all"),
+			"apply":   boolSchema("true → merge into the workspace; false → preview only (default)"),
+		}, []string{"profile"})),
 		tool("build_all_profile_catalogs", "ADMIN: build/refresh catalog workspaces for MANY profiles at once from their live schemas (all usable profiles when 'profiles' is omitted). Per-profile permission-checked; failures are reported per-profile without aborting the batch. Handy for onboarding many databases.", objectSchema(map[string]any{
 			"profiles": arrayOf("string", "Profile ids to build; omit for all usable profiles"),
 			"prune":    boolSchema("true → remove workspace rows absent from each live schema; false (default) → keep as retire candidates"),
@@ -673,6 +678,7 @@ func annotateTools(list []map[string]any) []map[string]any {
 		"put_profile_dataset":            {destructive: true, idempotent: false},  // writes a per-profile dataset
 		"set_active_catalog":             {destructive: true, idempotent: true},   // hot-swaps the active catalog
 		"build_all_profile_catalogs":     {destructive: true, idempotent: true},   // batch-builds workspaces
+		"import_openmetadata_to_profile": {destructive: true, idempotent: true},   // imports OM metadata into a workspace
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -713,6 +719,7 @@ var adminOnlyTools = map[string]bool{
 	"put_profile_dataset":            true,
 	"set_active_catalog":             true,
 	"build_all_profile_catalogs":     true,
+	"import_openmetadata_to_profile": true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -1019,6 +1026,16 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return nil, err
 		}
 		return s.buildAllProfileCatalogs(ctx, a.Profiles, a.Prune), nil
+	case "import_openmetadata_to_profile":
+		var a struct {
+			Profile string `json:"profile"`
+			Scope   string `json:"scope"`
+			Apply   bool   `json:"apply"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.omImportToProfile(ctx, a.Profile, a.Scope, a.Apply), nil
 	case "get_active_catalog":
 		return s.activeCatalogInfo(), nil
 	case "set_active_catalog":

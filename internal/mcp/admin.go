@@ -180,6 +180,24 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/profile-catalogs", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.listProfileCatalogs(r.Context()))
 	})
+	mux.HandleFunc("POST /api/profile-catalogs/{profile}/openmetadata-import", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		profile := r.PathValue("profile")
+		var req struct {
+			Scope string `json:"scope"`
+			Apply bool   `json:"apply"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		res := s.omImportToProfile(r.Context(), profile, req.Scope, req.Apply)
+		if req.Apply {
+			s.adminAudit(r, "profile_catalog.openmetadata_import", profile, nil)
+		}
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("POST /api/profile-catalogs/build-all", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return
