@@ -446,6 +446,24 @@ func (s *Server) tools() []map[string]any {
 			"table":         str("Optional single table (name or schema.table) to describe"),
 			"include_views": boolSchema("Include views/materialized views (default false)"),
 		}, []string{"profile"})),
+		tool("list_profile_catalogs", "List every usable DB profile with whether it has its own catalog metadata workspace (under <data>/profiles/<profile>/) and, if so, its table/relation counts and build time. Per-profile workspaces let you view and manage catalog JSON separately for each connected database.", objectSchema(map[string]any{}, nil)),
+		tool("get_profile_catalog", "View a DB profile's catalog workspace: catalog summary, dataset-file inventory (with per-file counts/issues), and health. Read-only.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+		}, []string{"profile"})),
+		tool("build_profile_catalog", "ADMIN: build/refresh a DB profile's catalog workspace from its LIVE schema — collect the physical model and write meta_physical_models.json + topology_relations.json under <data>/profiles/<profile>/ (existing workspace descriptions preserved; deletions kept as retire candidates unless prune=true). After building, manage business metadata with put_profile_dataset.", objectSchema(map[string]any{
+			"profile": str("DB profile id to build from"),
+			"schemas": arrayOf("string", "Optional schemas to scope; omit for all non-system schemas"),
+			"prune":   boolSchema("true → remove workspace rows absent from the live schema; false (default) → keep as retire candidates"),
+		}, []string{"profile"})),
+		tool("get_profile_dataset", "Read one metadata JSON file (e.g. overrides, glossary, meta_physical_models) from a DB profile's catalog workspace. Read-only.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+			"dataset": str("dataset name (e.g. overrides, glossary, physical_models, metrics, relations)"),
+		}, []string{"profile", "dataset"})),
+		tool("put_profile_dataset", "ADMIN: write one metadata JSON file into a DB profile's catalog workspace (validated, previous file backed up, rolled back if the workspace fails to compile). Use to manage per-profile business metadata (logical names via overrides, glossary, metrics, ...).", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+			"dataset": str("dataset name to replace"),
+			"content": map[string]any{"description": "the full JSON content for the dataset file"},
+		}, []string{"profile", "dataset", "content"})),
 		tool("apply_metadata_sync", "ADMIN: reflect a source's latest collected snapshot into the operational catalog — merge the PHYSICAL model (columns, types, nullability, PK/FK, FK relations) into meta_physical_models.json / topology_relations.json (with backups) and hot-reload. Physical facts are auto-applied; existing column/table descriptions (business meaning) are PRESERVED; dropped tables/columns are retire candidates and are NOT removed unless prune=true. Run run_metadata_sync first to collect a snapshot.", objectSchema(map[string]any{
 			"source": str("metadata source id (db profile id) whose latest snapshot to apply"),
 			"prune":  boolSchema("true → also remove physical rows for tables/columns absent from the snapshot (within collected schemas); false (default) → keep them as retire candidates"),
@@ -627,6 +645,8 @@ func annotateTools(list []map[string]any) []map[string]any {
 		"export_to_openmetadata":         {destructive: true, idempotent: true},   // writes to OpenMetadata (dry_run=false)
 		"export_lineage_to_openmetadata": {destructive: true, idempotent: true},   // writes lineage to OpenMetadata
 		"apply_metadata_sync":            {destructive: true, idempotent: true},   // merges physical model into catalog
+		"build_profile_catalog":          {destructive: true, idempotent: true},   // builds a per-profile workspace
+		"put_profile_dataset":            {destructive: true, idempotent: false},  // writes a per-profile dataset
 	}
 	for _, t := range list {
 		name, _ := t["name"].(string)
@@ -663,6 +683,8 @@ var adminOnlyTools = map[string]bool{
 	"export_to_openmetadata":         true,
 	"export_lineage_to_openmetadata": true,
 	"apply_metadata_sync":            true,
+	"build_profile_catalog":          true,
+	"put_profile_dataset":            true,
 }
 
 // dbProfileTools is the single registry for MCP tools that can reach an
@@ -679,6 +701,7 @@ var dbProfileTools = map[string]bool{
 	"run_metadata_sync":       true,
 	"profile_metadata_assets": true,
 	"describe_db_schema":      true,
+	"build_profile_catalog":   true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -917,6 +940,48 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return map[string]any{"status": "forbidden", "error": err.Error()}, nil
 		}
 		return s.mcpDescribeDBSchema(ctx, a.Profile, a.Schemas, a.Table, a.IncludeViews), nil
+	case "list_profile_catalogs":
+		return s.listProfileCatalogs(ctx), nil
+	case "get_profile_catalog":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.getProfileCatalog(a.Profile), nil
+	case "build_profile_catalog":
+		var a struct {
+			Profile string   `json:"profile"`
+			Schemas []string `json:"schemas"`
+			Prune   bool     `json:"prune"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+			return map[string]any{"status": "forbidden", "error": err.Error()}, nil
+		}
+		return s.buildProfileCatalog(ctx, a.Profile, a.Schemas, a.Prune), nil
+	case "get_profile_dataset":
+		var a struct {
+			Profile string `json:"profile"`
+			Dataset string `json:"dataset"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.getProfileDataset(a.Profile, a.Dataset), nil
+	case "put_profile_dataset":
+		var a struct {
+			Profile string          `json:"profile"`
+			Dataset string          `json:"dataset"`
+			Content json.RawMessage `json:"content"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.putProfileDataset(a.Profile, a.Dataset, a.Content), nil
 	case "apply_metadata_sync":
 		var a struct {
 			Source string `json:"source"`

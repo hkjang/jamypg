@@ -176,6 +176,45 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, res)
 	})
+	mux.HandleFunc("GET /api/profile-catalogs", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, s.listProfileCatalogs(r.Context()))
+	})
+	mux.HandleFunc("GET /api/profile-catalogs/{profile}", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, s.getProfileCatalog(r.PathValue("profile")))
+	})
+	mux.HandleFunc("POST /api/profile-catalogs/{profile}/build", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		profile := r.PathValue("profile")
+		var req struct {
+			Schemas []string `json:"schemas"`
+			Prune   bool     `json:"prune"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		res := s.buildProfileCatalog(r.Context(), profile, req.Schemas, req.Prune)
+		s.adminAudit(r, "profile_catalog.build", profile, nil)
+		writeJSON(w, http.StatusOK, res)
+	})
+	mux.HandleFunc("GET /api/profile-catalogs/{profile}/dataset/{name}", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, s.getProfileDataset(r.PathValue("profile"), r.PathValue("name")))
+	})
+	mux.HandleFunc("PUT /api/profile-catalogs/{profile}/dataset/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		profile, name := r.PathValue("profile"), r.PathValue("name")
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		res := s.putProfileDataset(profile, name, body)
+		s.adminAudit(r, "profile_catalog.put_dataset", profile+"/"+name, nil)
+		writeJSON(w, http.StatusOK, res)
+	})
 	mux.HandleFunc("GET /api/audit/verify", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return

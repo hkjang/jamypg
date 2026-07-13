@@ -16,7 +16,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(55종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(60종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -366,6 +366,10 @@ Invoke-RestMethod `
 - `describe_db_schema` — 연결된 프로파일 DB의 **라이브 스키마**(information_schema)를 조회해 카탈로그에 없는 테이블도 SQL 생성 근거로 제공. **카탈로그 우선**: 등록된 테이블/컬럼엔 논리명·설명을 함께 붙이고 `in_catalog` 플래그로 구분. 읽기 전용·비저장. 라이브 전용 테이블을 검증까지 통과시키려면 `apply_metadata_sync`로 반영
 - `run_metadata_sync` — 원천 DB의 물리 모델(스키마·테이블·뷰·컬럼·PK/FK/Unique/Check·인덱스·코멘트·행수추정)을 버전 스냅숏으로 수집하고 이전 스냅숏 대비 변경분을 반환. 기본 증분(스키마 해시 동일 시 스킵). 삭제는 즉시 반영하지 않고 폐기 후보로 표시. **물리 정보만 수집하며 업무 의미(논리명·지표)는 운영 카탈로그에 쓰지 않음**
 - `apply_metadata_sync` — **(관리자)** 원천의 최신 스냅숏을 카탈로그에 **자동 반영**: 물리 모델(컬럼·타입·NULL·PK/FK·FK 관계)을 meta_physical_models.json/topology_relations.json에 병합(백업)하고 핫리로드. 물리 사실은 자동 반영하되 **기존 설명(업무 의미)은 보존**, 삭제분은 `prune=true`가 아니면 폐기 후보로만 표시. 스케줄러 `-sync-apply`로 매 싱크 시 자동 실행 가능
+- `list_profile_catalogs` — 등록된 DB 프로파일별 **카탈로그 워크스페이스**(`<data>/profiles/<profile>/`) 유무·테이블/관계 수·구축 시각 목록. 프로파일마다 독립 메타데이터 JSON을 조회·관리
+- `get_profile_catalog` — 특정 프로파일 워크스페이스의 카탈로그 요약·데이터셋 인벤토리·헬스 조회
+- `build_profile_catalog` — **(관리자)** 프로파일의 **라이브 스키마로 워크스페이스 구축/갱신**(물리 모델을 프로파일 디렉터리에 기록, 기존 설명 보존·삭제는 폐기 후보)
+- `get_profile_dataset` / `put_profile_dataset` — 프로파일 워크스페이스의 개별 메타데이터 JSON(overrides·glossary·physical_models 등) 조회 / **(관리자)** 검증·백업·롤백과 함께 관리
 - `get_sync_status` — 원천별 저장된 스냅숏 목록(최신순, 수집시각·스키마해시·객체수)
 - `diff_metadata_snapshots` — 두 스냅숏 간 변경분(테이블/컬럼 추가·삭제, 타입/Null/키/코멘트/인덱스/뷰SQL 변경, 각각 심각도·처리방침) 계산
 - `profile_metadata_assets` — 컬럼 통계(행수·Null비율·distinct·min/max·상위값·포맷패턴)를 비용 제어(모드별 샘플: fast 2k / standard 100k / deep 전체)·**개인정보 보호형**(민감 컬럼은 원본값·min/max·상위값 미저장, 길이·패턴·건수만)으로 계산. 결과는 검토 후보이며 운영 카탈로그(column_stats)에 자동 반영하지 않음

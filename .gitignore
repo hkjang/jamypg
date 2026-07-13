@@ -10,3 +10,4 @@ jamypg-mcp-*.exe
 data/*/metasync/
 data/*/reviews/
 data/*/openmetadata.json
+data/*/profiles/
