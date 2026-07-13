@@ -81,6 +81,9 @@ func (s *Server) listProfileCatalogs(ctx context.Context) map[string]any {
 				sum := cat.Summary()
 				entry["tables"] = sum.TableCount
 				entry["relations"] = sum.RelationCount
+				q := cat.QualityReport()
+				entry["quality_score"] = q.OverallScore
+				entry["quality_grade"] = q.OverallGrade
 			}
 		}
 		out = append(out, entry)
@@ -104,6 +107,14 @@ func (s *Server) getProfileCatalog(profileID string) map[string]any {
 	if err != nil {
 		return map[string]any{"profile": profileID, "workspace": true, "error": "load failed: " + err.Error()}
 	}
+	q := cat.QualityReport()
+	gate := cat.QualityGate()
+	blocking := 0
+	for _, v := range gate.Violations {
+		if v.Severity == "block" {
+			blocking++
+		}
+	}
 	return map[string]any{
 		"profile":   profileID,
 		"workspace": true,
@@ -111,6 +122,12 @@ func (s *Server) getProfileCatalog(profileID string) map[string]any {
 		"summary":   cat.Summary(),
 		"datasets":  cat.DatasetStatus(),
 		"health":    cat.Health(),
+		"quality": map[string]any{
+			"overall_score": q.OverallScore,
+			"overall_grade": q.OverallGrade,
+			"gate_pass":     gate.Pass,
+			"blocking":      blocking,
+		},
 	}
 }
 

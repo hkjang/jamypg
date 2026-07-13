@@ -115,7 +115,7 @@ function loadList(){
     var ps=d.profiles||[];
     $('plist').innerHTML = ps.length ? ps.map(function(p){
       var ws=p.workspace?('<span class="pill ok">워크스페이스</span>'):('<span class="pill no">없음</span>');
-      var meta=p.workspace?('테이블 '+(p.tables||0)+' · 관계 '+(p.relations||0)):(p.type||'');
+      var meta=p.workspace?('테이블 '+(p.tables||0)+' · 관계 '+(p.relations||0)+(p.quality_grade?(' · 품질 '+p.quality_grade):'')):(p.type||'');
       return '<li data-p="'+esc(p.profile)+'"'+(CUR===p.profile?' class="active"':'')+'>'+
         '<div class="row" style="justify-content:space-between"><b>'+esc(p.profile)+'</b>'+ws+'</div>'+
         '<div class="pmeta">'+esc(p.name||'')+' · '+esc(meta)+'</div></li>';
@@ -137,9 +137,12 @@ function selectProfile(p){
     }
     if(d.error){$('summary').innerHTML='<span class="msg bad">'+esc(d.error)+'</span>';$('dsCard').style.display='none';return;}
     var s=d.summary||{};
+    var q=d.quality||{};
+    var qpill = q.overall_grade? ('<span class="kpi">품질 <b>'+(q.overall_score!=null?q.overall_score.toFixed(1):'-')+'</b> '+
+      '<span class="pill '+(q.gate_pass?'ok':'no')+'">'+esc(q.overall_grade)+(q.gate_pass?' · 게이트 통과':' · 게이트 차단')+'</span></span>') : '';
     $('summary').innerHTML='<span class="kpi"><b>'+(s.table_count||0)+'</b> 테이블</span>'+
       '<span class="kpi"><b>'+(s.column_count||0)+'</b> 컬럼</span>'+
-      '<span class="kpi"><b>'+(s.relation_count||0)+'</b> 관계</span>'+
+      '<span class="kpi"><b>'+(s.relation_count||0)+'</b> 관계</span>'+ qpill +
       '<span class="kpi mono" style="font-size:12px">dir: '+esc(d.dir||'')+'</span>';
     var h=d.health||{};
     $('health').textContent = h.status? ('health: '+h.status+' · errors '+(h.error_count!=null?h.error_count:'-')) : '';
