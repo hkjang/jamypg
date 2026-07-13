@@ -162,6 +162,57 @@ func (s *Server) buildProfileCatalog(ctx context.Context, profileID string, sche
 	return res
 }
 
+// buildAllProfileCatalogs builds/refreshes catalog workspaces for many profiles
+// in one call (all usable profiles when the list is empty). Each profile is
+// permission-checked; failures are reported per-profile without aborting the
+// batch. ADMIN.
+func (s *Server) buildAllProfileCatalogs(ctx context.Context, profiles []string, prune bool) map[string]any {
+	targets := profiles
+	if len(targets) == 0 {
+		profs, err := s.usableProfiles(ctx)
+		if err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+		for _, p := range profs {
+			targets = append(targets, p.ID)
+		}
+	}
+	results := make([]map[string]any, 0, len(targets))
+	built, failed := 0, 0
+	for _, pid := range targets {
+		r := map[string]any{"profile": pid}
+		if err := s.canUseProfileID(ctx, userFrom(ctx), pid); err != nil {
+			r["status"] = "forbidden"
+			r["error"] = err.Error()
+			failed++
+			results = append(results, r)
+			continue
+		}
+		res := s.buildProfileCatalog(ctx, pid, nil, prune)
+		if em, _ := res["error"].(string); em != "" {
+			r["status"] = "failed"
+			r["error"] = em
+			failed++
+		} else {
+			r["status"] = "built"
+			r["columns_added"] = res["columns_added"]
+			r["columns_updated"] = res["columns_updated"]
+			if sum, ok := res["summary"].(catalog.CatalogSummary); ok {
+				r["tables"] = sum.TableCount
+			}
+			built++
+		}
+		results = append(results, r)
+	}
+	return map[string]any{
+		"requested": len(targets),
+		"built":     built,
+		"failed":    failed,
+		"results":   results,
+		"note":      "각 프로파일 워크스페이스를 라이브 DB로 구축했습니다. get_profile_catalog로 개별 조회하세요.",
+	}
+}
+
 // getProfileDataset returns one dataset JSON file's raw content from a
 // profile's workspace.
 func (s *Server) getProfileDataset(profileID, name string) map[string]any {

@@ -60,7 +60,7 @@
       <div class="card">
         <div class="row" style="justify-content:space-between">
           <h2 style="margin:0">프로파일</h2>
-          <button class="btn" id="reload">새로고침</button>
+          <div class="row"><button class="btn warn" id="buildAll">전체 구축</button><button class="btn" id="reload">새로고침</button></div>
         </div>
         <ul class="plist" id="plist"><li class="empty">불러오는 중…</li></ul>
       </div>
@@ -192,6 +192,15 @@ $('activateBtn').onclick=function(){
     .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
     .then(function(res){var d=res.d;if(!res.ok||d.error){flash(false,d.error||'실패');return;}
       flash(true,'활성 카탈로그 전환: '+(d.activated||'')); refreshActiveBadge(); loadList();
+    }).catch(function(e){flash(false,e.message);});
+};
+$('buildAll').onclick=function(){
+  if(!confirm('등록된 모든 프로파일의 카탈로그 워크스페이스를 라이브 DB로 구축/갱신합니다. 진행할까요?')) return;
+  flash(true,'전체 구축 중…');
+  fetch('/api/profile-catalogs/build-all',{method:'POST',headers:headers(true),body:'{}'})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){var d=res.d;if(!res.ok||d.error){flash(false,d.error||'실패');return;}
+      flash(true,'전체 구축: 성공 '+(d.built||0)+' / 실패 '+(d.failed||0)); loadList();
     }).catch(function(e){flash(false,e.message);});
 };
 $('reload').onclick=loadList;
