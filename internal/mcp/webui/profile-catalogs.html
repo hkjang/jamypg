@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JASQL · 프로파일 카탈로그</title>
+<style>
+  :root{
+    --bg:#f5f7fa;--card:#fff;--ink:#1c2430;--sub:#5b6b7f;--line:#dde4ec;
+    --blue:#2563eb;--green:#15803d;--green-soft:#e6f6ec;--amber:#b45309;
+    --red:#b91c1c;--red-soft:#fdeaea;--mono:ui-monospace,'Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,'Malgun Gothic','Noto Sans KR',sans-serif;}
+  header{background:#101a2e;color:#e8eefc;padding:12px 20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;position:sticky;top:0;z-index:20;}
+  header h1{font-size:16px;margin:0 10px 0 0;}
+  .grow{flex:1;}
+  header input#adminToken{background:#1d2b47;border:1px solid #35507f;color:#e8eefc;border-radius:6px;padding:6px 10px;width:160px;}
+  main{max-width:1300px;margin:0 auto;padding:16px 20px 90px;}
+  .cols{display:grid;grid-template-columns:280px 1fr;gap:14px;}
+  @media(max-width:900px){.cols{grid-template-columns:1fr;}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
+  .card h2{font-size:13px;margin:0 0 10px;color:var(--sub);font-weight:600;letter-spacing:.3px;text-transform:uppercase;}
+  .plist{list-style:none;margin:0;padding:0;}
+  .plist li{padding:9px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:6px;cursor:pointer;}
+  .plist li:hover{border-color:var(--blue);}
+  .plist li.active{background:var(--blue);color:#fff;border-color:var(--blue);}
+  .plist .pmeta{font-size:11.5px;color:var(--sub);} .plist li.active .pmeta{color:#cfe0ff;}
+  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;}
+  .pill.ok{background:var(--green-soft);color:var(--green);} .pill.no{background:#eef1f5;color:#5b6b7f;}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer;}
+  .btn:hover{border-color:var(--blue);color:var(--blue);}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600;}
+  .btn.warn{background:var(--amber);border-color:var(--amber);color:#fff;}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--sub);}
+  td.mono,.mono{font-family:var(--mono);font-size:12px;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .kpi{display:inline-block;margin-right:16px;}
+  .kpi b{font-size:22px;font-variant-numeric:tabular-nums;}
+  textarea{width:100%;min-height:280px;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:var(--mono);font-size:12px;}
+  select{border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:13px;}
+  .msg{font-size:12.5px;margin-left:6px;} .msg.ok{color:var(--green);} .msg.bad{color:var(--red);}
+  .empty{color:var(--sub);padding:20px;text-align:center;}
+  .dsrow{cursor:pointer;} .dsrow:hover{background:#f2f6ff;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🗃 프로파일 카탈로그</h1>
+  <input id="adminToken" type="password" placeholder="관리 토큰">
+  <span class="grow"></span>
+  <span class="msg" id="msg"></span>
+</header>
+<main>
+  <div class="cols">
+    <div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">프로파일</h2>
+          <button class="btn" id="reload">새로고침</button>
+        </div>
+        <ul class="plist" id="plist"><li class="empty">불러오는 중…</li></ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" id="detailCard" style="display:none">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0" id="detailTitle"></h2>
+          <div class="row">
+            <input id="buildSchemas" placeholder="schemas (콤마, 선택)" style="border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12px;width:170px">
+            <label class="mono" style="font-size:12px"><input type="checkbox" id="buildPrune"> prune</label>
+            <button class="btn warn" id="buildBtn">라이브 DB로 구축/갱신</button>
+          </div>
+        </div>
+        <div id="summary" style="margin:8px 0 4px"></div>
+        <div id="health" class="mono" style="font-size:11.5px;color:var(--sub)"></div>
+      </div>
+
+      <div class="card" id="dsCard" style="display:none">
+        <h2>데이터셋</h2>
+        <table><thead><tr><th>이름</th><th>파일</th><th class="num">건수</th><th>상태</th></tr></thead>
+          <tbody id="dsBody"></tbody></table>
+      </div>
+
+      <div class="card" id="editorCard" style="display:none">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">편집 · <span class="mono" id="edName"></span></h2>
+          <div class="row">
+            <button class="btn" id="edReload">되돌리기</button>
+            <button class="btn primary" id="edSave">저장(검증·백업)</button>
+          </div>
+        </div>
+        <textarea id="edText" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/admin/nav.js"></script>
+<script>
+'use strict';
+var $=function(id){return document.getElementById(id);};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+function headers(j){var h={};if(j)h['Content-Type']='application/json';var t=$('adminToken');if(t&&t.value)h['X-Admin-Token']=t.value;return h;}
+function flash(ok,t){var m=$('msg');m.className='msg '+(ok?'ok':'bad');m.textContent=t;setTimeout(function(){m.textContent='';},2800);}
+var CUR=null;
+
+function loadList(){
+  fetch('/api/profile-catalogs',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+    if(d.error){flash(false,d.error);return;}
+    var ps=d.profiles||[];
+    $('plist').innerHTML = ps.length ? ps.map(function(p){
+      var ws=p.workspace?('<span class="pill ok">워크스페이스</span>'):('<span class="pill no">없음</span>');
+      var meta=p.workspace?('테이블 '+(p.tables||0)+' · 관계 '+(p.relations||0)):(p.type||'');
+      return '<li data-p="'+esc(p.profile)+'"'+(CUR===p.profile?' class="active"':'')+'>'+
+        '<div class="row" style="justify-content:space-between"><b>'+esc(p.profile)+'</b>'+ws+'</div>'+
+        '<div class="pmeta">'+esc(p.name||'')+' · '+esc(meta)+'</div></li>';
+    }).join('') : '<li class="empty">사용 가능한 프로파일이 없습니다.</li>';
+    Array.prototype.forEach.call($('plist').querySelectorAll('li[data-p]'),function(li){
+      li.onclick=function(){ selectProfile(li.getAttribute('data-p')); };
+    });
+  }).catch(function(e){flash(false,e.message);});
+}
+
+function selectProfile(p){
+  CUR=p; loadList();
+  $('editorCard').style.display='none';
+  fetch('/api/profile-catalogs/'+encodeURIComponent(p),{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+    $('detailCard').style.display=''; $('detailTitle').textContent=p;
+    if(!d.workspace){
+      $('summary').innerHTML='<span class="empty">워크스페이스가 없습니다. 라이브 DB로 구축하세요.</span>';
+      $('health').textContent=''; $('dsCard').style.display='none'; return;
+    }
+    if(d.error){$('summary').innerHTML='<span class="msg bad">'+esc(d.error)+'</span>';$('dsCard').style.display='none';return;}
+    var s=d.summary||{};
+    $('summary').innerHTML='<span class="kpi"><b>'+(s.table_count||0)+'</b> 테이블</span>'+
+      '<span class="kpi"><b>'+(s.column_count||0)+'</b> 컬럼</span>'+
+      '<span class="kpi"><b>'+(s.relation_count||0)+'</b> 관계</span>'+
+      '<span class="kpi mono" style="font-size:12px">dir: '+esc(d.dir||'')+'</span>';
+    var h=d.health||{};
+    $('health').textContent = h.status? ('health: '+h.status+' · errors '+(h.error_count!=null?h.error_count:'-')) : '';
+    renderDatasets(p, d.datasets||[]);
+  }).catch(function(e){flash(false,e.message);});
+}
+
+function renderDatasets(p, ds){
+  $('dsCard').style.display='';
+  $('dsBody').innerHTML = ds.map(function(x){
+    var editable = x.editable!==false && x.format!=='jsonl-dir';
+    var st = x.present===false?'<span class="pill no">없음</span>':(editable?'<span class="pill ok">편집가능</span>':'<span class="pill no">읽기전용</span>');
+    return '<tr class="dsrow" data-ds="'+esc(x.name)+'" data-edit="'+editable+'"><td class="mono">'+esc(x.name)+'</td>'+
+      '<td class="mono">'+esc(x.file||'')+'</td><td class="num">'+(x.loaded!=null?esc(x.loaded):'-')+'</td><td>'+st+'</td></tr>';
+  }).join('');
+  Array.prototype.forEach.call($('dsBody').querySelectorAll('tr[data-ds]'),function(tr){
+    tr.onclick=function(){ openEditor(p, tr.getAttribute('data-ds'), tr.getAttribute('data-edit')==='true'); };
+  });
+}
+
+function openEditor(p, name, editable){
+  fetch('/api/profile-catalogs/'+encodeURIComponent(p)+'/dataset/'+encodeURIComponent(name),{headers:headers()})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.error){flash(false,d.error);return;}
+      $('editorCard').style.display=''; $('edName').textContent=name+(editable?'':' (읽기전용)');
+      $('edText').value=JSON.stringify(d.content,null,2);
+      $('edText').readOnly=!editable; $('edSave').style.display=editable?'':'none';
+      $('edText')._p=p; $('edText')._name=name;
+      $('editorCard').scrollIntoView({behavior:'smooth'});
+    }).catch(function(e){flash(false,e.message);});
+}
+
+$('reload').onclick=loadList;
+$('buildBtn').onclick=function(){
+  if(!CUR) return;
+  if(!confirm(CUR+' 프로파일의 라이브 DB 스키마로 워크스페이스를 구축/갱신합니다. 진행할까요?')) return;
+  var body={schemas:($('buildSchemas').value.trim()?$('buildSchemas').value.split(',').map(function(x){return x.trim();}):[]),prune:$('buildPrune').checked};
+  fetch('/api/profile-catalogs/'+encodeURIComponent(CUR)+'/build',{method:'POST',headers:headers(true),body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){var d=res.d;if(!res.ok||d.error){flash(false,d.error||'실패');return;}
+      flash(true,'구축 완료 (컬럼 +'+(d.columns_added||0)+' / 갱신 '+(d.columns_updated||0)+')'); selectProfile(CUR);
+    }).catch(function(e){flash(false,e.message);});
+};
+$('edReload').onclick=function(){ var t=$('edText'); if(t._p) openEditor(t._p,t._name,!t.readOnly); };
+$('edSave').onclick=function(){
+  var t=$('edText'); if(!t._p) return;
+  var parsed; try{ parsed=JSON.parse(t.value); }catch(e){ flash(false,'JSON 파싱 오류: '+e.message); return; }
+  fetch('/api/profile-catalogs/'+encodeURIComponent(t._p)+'/dataset/'+encodeURIComponent(t._name),
+    {method:'PUT',headers:headers(true),body:JSON.stringify(parsed)})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+    .then(function(res){var d=res.d;if(!res.ok||!d.applied){flash(false,(d&&d.error)||'저장 실패');return;}
+      flash(true,'저장됨 (백업 생성)'); selectProfile(t._p);
+    }).catch(function(e){flash(false,e.message);});
+};
+JASQL.mount({page:'profcat',onReady:loadList});
+</script>
+</body>
+</html>
