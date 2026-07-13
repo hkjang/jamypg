@@ -461,6 +461,9 @@ func (s *Server) tools() []map[string]any {
 			"incremental":   boolSchema("true (default) → skip when the schema hash is unchanged; false → always snapshot and diff"),
 			"include_views": boolSchema("Collect views/materialized views and their SQL (default false)"),
 		}, []string{"source"})),
+		tool("db_health_report", "DBA health check: run read-only system-catalog diagnostics against a connected DB profile and flag classic issues — tables without a primary key (high), foreign-key columns lacking a supporting index (medium), unused indexes (low), stale/absent planner statistics (medium), and the largest tables with comment coverage (info). PostgreSQL runs all checks; MySQL/MariaDB run the portable subset and mark the rest unsupported. Read-only (pg_catalog/information_schema); nothing is changed — remediation (CREATE INDEX, ANALYZE) is left to the DBA.", objectSchema(map[string]any{
+			"profile": str("DB profile id to diagnose"),
+		}, []string{"profile"})),
 		tool("describe_db_schema", "Introspect a connected DB profile's LIVE schema (information_schema) so you can generate SQL for tables that are not in the catalog. Catalog-first: tables/columns already registered are annotated with their logical names/descriptions, and each table is flagged in_catalog (true = curated metadata, false = live-only physical structure). Read-only, nothing persisted. Use it to ground SQL, then run_sql_safely/execute_with_repair(profile=...) to execute. To make live-only tables pass catalog validation, apply_metadata_sync them.", objectSchema(map[string]any{
 			"profile":       str("DB profile id to introspect"),
 			"schemas":       arrayOf("string", "Optional schema names to scope; omit for all non-system schemas"),
@@ -743,6 +746,7 @@ var dbProfileTools = map[string]bool{
 	"profile_metadata_assets": true,
 	"describe_db_schema":      true,
 	"build_profile_catalog":   true,
+	"db_health_report":        true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -988,6 +992,20 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return map[string]any{"status": "forbidden", "error": err.Error()}, nil
 		}
 		return s.mcpDescribeDBSchema(ctx, a.Profile, a.Schemas, a.Table, a.IncludeViews), nil
+	case "db_health_report":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Profile == "" {
+			return map[string]any{"status": "error", "error": "profile is required"}, nil
+		}
+		if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+			return map[string]any{"status": "forbidden", "error": err.Error()}, nil
+		}
+		return s.mcpDBHealthReport(ctx, a.Profile), nil
 	case "list_profile_catalogs":
 		return s.listProfileCatalogs(ctx), nil
 	case "get_profile_catalog":
