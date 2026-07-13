@@ -76,6 +76,10 @@ type Server struct {
 	// audit log, metasync snapshots, OpenMetadata config, profile workspaces —
 	// stay pinned here so a catalog switch never relocates them.
 	dataDir string
+	// wsCache holds compiled profile-workspace catalogs for per-request use
+	// (prepare/validate/execute with a profile), fingerprint-invalidated.
+	wsMu    sync.Mutex
+	wsCache map[string]wsCacheEntry
 }
 
 // opDir returns the fixed operational data dir (falls back to the active
@@ -419,6 +423,7 @@ func (s *Server) tools() []map[string]any {
 			"limit":            integer("Preview row limit for bounded_sql"),
 			"metrics":          arrayOf("string", "Dictionary metric names this SQL claims to implement; checked against metric expressions"),
 			"expected_outputs": arrayOf("string", "Business terms (dimensions/metrics from analyze_question expected_output_columns) the SELECT list must cover"),
+			"profile":          str("Optional DB profile id: when that profile has a catalog workspace, validate against IT (the right catalog for that DB) instead of the active catalog"),
 		}, []string{"sql"})),
 		tool("explain_sql", "Risk estimate for a query. Always returns the static metadata-based analysis; when a db profile is given it additionally runs a real EXPLAIN (postgres/mysql/mariadb, JSON format) and analyzes the plan for full scans, cartesian joins, oversized row estimates, large sorts, and high cost. If live risk is high, regenerate with period/limit constraints instead of executing.", objectSchema(map[string]any{
 			"sql":     str("SQL to explain"),
@@ -615,6 +620,7 @@ func (s *Server) tools() []map[string]any {
 			"clarifications":    map[string]any{"type": "object", "description": "Answers from a previous needs_clarification response, keyed by clarification id; value may be free text or an option key.", "additionalProperties": map[string]any{"type": "string"}},
 			"previous_question": str("For follow-up turns ('그중 서울만', '이걸 월별로'): the prior question this one refines. Merges context so short refinements work."),
 			"previous_sql":      str("Optional: the SQL produced for previous_question — returned back as previous_sql to refine instead of regenerating from scratch."),
+			"profile":           str("Optional DB profile id: when that profile has a catalog workspace, prepare against IT instead of the active catalog (per-request multi-DB; no global switch). Falls back to the active catalog when no workspace exists."),
 		}, []string{"question"})),
 		tool("build_sql_skeleton", "Assemble a draft DB SQL frame from vetted parts only: catalog join conditions with aliases, dictionary metric expressions, semantic-type-aware time predicates, and policy filters. Fill the /* SLOT */ comments; do not restructure. → prepare_sql_context already calls this; use it directly only for incremental refinement.", objectSchema(map[string]any{
 			"question": str("Natural language question (drives time/metric/pattern detection)"),
@@ -882,6 +888,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			catalog.ValidateRequest
 			ExpectedOutputColumns []string `json:"expected_output_columns,omitempty"`
 			MetricNames           []string `json:"metric_names,omitempty"`
+			Profile               string   `json:"profile,omitempty"`
 		}
 		if err := decodeArgs(req.Arguments, &a); err != nil {
 			return nil, err
@@ -892,7 +899,13 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		if len(a.Metrics) == 0 && len(a.MetricNames) > 0 {
 			a.Metrics = a.MetricNames
 		}
-		return s.cat().ValidateSQL(a.ValidateRequest), nil
+		vcat, source := s.catalogFor(a.Profile)
+		res := vcat.ValidateSQL(a.ValidateRequest)
+		if source != "active" {
+			// annotate which catalog validated (keeps the response shape)
+			res.Hints = append(res.Hints, "validated against "+source)
+		}
+		return res, nil
 	case "explain_sql":
 		var a struct {
 			SQL     string `json:"sql"`
@@ -1138,7 +1151,10 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 				}, nil
 			}
 		}
-		v := s.cat().ValidateSQL(catalog.ValidateRequest{SQL: a.SQL, Limit: a.Limit})
+		// validate against the profile's own workspace catalog when it has one
+		// (the right catalog for that DB); fall back to the active catalog.
+		vcat, _ := s.catalogFor(a.Profile)
+		v := vcat.ValidateSQL(catalog.ValidateRequest{SQL: a.SQL, Limit: a.Limit})
 		if a.Profile == "" {
 			return map[string]any{
 				"status":       "dry_run_only",
@@ -1434,11 +1450,16 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			Clarifications   map[string]string `json:"clarifications"`
 			PreviousQuestion string            `json:"previous_question"`
 			PreviousSQL      string            `json:"previous_sql"`
+			Profile          string            `json:"profile"`
 		}
 		if err := decodeArgs(req.Arguments, &a); err != nil {
 			return nil, err
 		}
-		bundle := s.cat().PrepareFollowup(a.Question, a.PreviousQuestion, a.PreviousSQL, a.Tables, a.Limit, time.Now(), a.Clarifications)
+		pcat, catSource := s.catalogFor(a.Profile)
+		bundle := pcat.PrepareFollowup(a.Question, a.PreviousQuestion, a.PreviousSQL, a.Tables, a.Limit, time.Now(), a.Clarifications)
+		if catSource != "active" {
+			bundle["catalog_source"] = catSource
+		}
 		s.trackPendingClarifications(ctx, bundle)
 		// learning loop: a clarification round the user answered is a strong
 		// relevance signal — record it as "corrected" feedback so the chosen

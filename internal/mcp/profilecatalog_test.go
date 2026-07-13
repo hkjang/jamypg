@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"jamypg/internal/catalog"
 )
@@ -94,4 +95,51 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestWorkspaceCatalogCacheAndCatalogFor(t *testing.T) {
+	s := newPCServer(t)
+	// no workspace → catalogFor falls back to active
+	c, src := s.catalogFor("pg-x")
+	if src != "active" || c != s.cat() {
+		t.Fatalf("no workspace should fall back to active, got %q", src)
+	}
+
+	// create a workspace
+	dir := s.profileCatalogDir("pg-x")
+	if err := ensureWorkspaceScaffold(dir); err != nil {
+		t.Fatal(err)
+	}
+	phys := `[{"schema_name":"public","table_name":"orders","column_order":"1","column_name":"id","data_type":"BIGINT","is_pk":"Y","is_fk":"N","description":"","version":1}]`
+	if err := os.WriteFile(filepath.Join(dir, "meta_physical_models.json"), []byte(phys), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, ok := s.workspaceCatalog("pg-x")
+	if !ok || len(ws.Tables) != 1 {
+		t.Fatalf("workspace catalog should load with 1 table, ok=%v", ok)
+	}
+	// cached: same pointer on second call
+	ws2, _ := s.workspaceCatalog("pg-x")
+	if ws2 != ws {
+		t.Fatal("expected cached catalog pointer")
+	}
+
+	// edit the workspace → fingerprint changes → reload
+	phys2 := `[{"schema_name":"public","table_name":"orders","column_order":"1","column_name":"id","data_type":"BIGINT","is_pk":"Y","is_fk":"N","description":"","version":1},
+{"schema_name":"public","table_name":"users","column_order":"1","column_name":"id","data_type":"BIGINT","is_pk":"Y","is_fk":"N","description":"","version":1}]`
+	time.Sleep(10 * time.Millisecond) // ensure mtime tick
+	if err := os.WriteFile(filepath.Join(dir, "meta_physical_models.json"), []byte(phys2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws3, ok := s.workspaceCatalog("pg-x")
+	if !ok || len(ws3.Tables) != 2 {
+		t.Fatalf("edited workspace should reload with 2 tables, got %d", len(ws3.Tables))
+	}
+
+	// catalogFor now picks the workspace
+	c2, src2 := s.catalogFor("pg-x")
+	if src2 != "profile-workspace:pg-x" || c2 != ws3 {
+		t.Fatalf("catalogFor should pick the workspace, got %q", src2)
+	}
 }

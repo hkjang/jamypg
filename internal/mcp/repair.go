@@ -62,7 +62,10 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 		}
 	}
 
-	v := s.cat().ValidateSQL(catalog.ValidateRequest{SQL: a.SQL, Limit: a.Limit})
+	// validate against the profile's workspace catalog when one exists — the
+	// correct catalog for the target DB in multi-DB use.
+	vcat, _ := s.catalogFor(a.Profile)
+	v := vcat.ValidateSQL(catalog.ValidateRequest{SQL: a.SQL, Limit: a.Limit})
 
 	if a.Profile == "" {
 		out := map[string]any{
@@ -72,7 +75,7 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 			"notice":      "db 프로파일이 없어 검증만 수행했습니다. 실제 실행하려면 profile을 전달하세요.",
 		}
 		if !v.Valid {
-			out["repair"] = s.repairKit("validation", "", v)
+			out["repair"] = s.repairKit(vcat, "validation", "", v)
 		}
 		return out, nil
 	}
@@ -82,7 +85,7 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 			"status":     "needs_fix",
 			"phase":      "validation",
 			"validation": v,
-			"repair":     s.repairKit("validation", "", v),
+			"repair":     s.repairKit(vcat, "validation", "", v),
 			"notice":     "검증 실패 SQL은 실행되지 않습니다. repair.fix_hints와 repair.schema_context로 컬럼/테이블을 고쳐 재시도하세요(최대 2회).",
 		}, nil
 	}
@@ -135,7 +138,7 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 			"phase":      "execution",
 			"error":      err.Error(),
 			"error_code": dbErrCodeOf(err.Error()),
-			"repair":     s.repairKit("execution", err.Error(), v),
+			"repair":     s.repairKit(vcat, "execution", err.Error(), v),
 			"notice":     "DB 실행 오류입니다. repair.hint와 repair.schema_context를 반영해 SQL을 고쳐 재시도하세요(최대 2회).",
 		}, nil
 	}
@@ -153,8 +156,8 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 		out["result"] = result
 		out["repair"] = map[string]any{
 			"phase":          "empty_result",
-			"zero_row_hints": s.cat().DiagnoseZeroRows(a.SQL),
-			"schema_context": s.schemaForSQL(a.Question, a.SQL),
+			"zero_row_hints": vcat.DiagnoseZeroRows(a.SQL),
+			"schema_context": s.schemaForSQL(vcat, a.Question, a.SQL),
 			"guidance":       "결과가 0행입니다. 조건을 완화해 재실행하거나, 데이터가 없음을 근거와 함께 답하세요.",
 		}
 		return out, nil
@@ -170,7 +173,7 @@ func (s *Server) executeWithRepair(ctx context.Context, a repairArgs) (map[strin
 // repairKit assembles the fix-context block: classified error code + hint and
 // the schema of the tables the SQL touches, so the model can correct names in
 // place.
-func (s *Server) repairKit(phase, errMsg string, v catalog.ValidationResult) map[string]any {
+func (s *Server) repairKit(c *catalog.Catalog, phase, errMsg string, v catalog.ValidationResult) map[string]any {
 	kit := map[string]any{"phase": phase}
 	if phase == "validation" {
 		kit["errors"] = v.Errors
@@ -187,20 +190,20 @@ func (s *Server) repairKit(phase, errMsg string, v catalog.ValidationResult) map
 	}
 	tables := referencedTableNames(v)
 	if len(tables) > 0 {
-		kit["schema_context"] = s.cat().SchemaContext("", tables, 60)
+		kit["schema_context"] = c.SchemaContext("", tables, 60)
 	}
 	return kit
 }
 
 // schemaForSQL returns the catalog schema for the tables named in the SQL's
 // validation, used for empty-result guidance.
-func (s *Server) schemaForSQL(question, sql string) any {
-	v := s.cat().ValidateSQL(catalog.ValidateRequest{SQL: sql})
+func (s *Server) schemaForSQL(c *catalog.Catalog, question, sql string) any {
+	v := c.ValidateSQL(catalog.ValidateRequest{SQL: sql})
 	tables := referencedTableNames(v)
 	if len(tables) == 0 {
 		return nil
 	}
-	return s.cat().SchemaContext(question, tables, 60)
+	return c.SchemaContext(question, tables, 60)
 }
 
 func referencedTableNames(v catalog.ValidationResult) []string {

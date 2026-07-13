@@ -38,7 +38,7 @@ func TestRepairKitValidationPhase(t *testing.T) {
 		Errors:   []catalog.ValidationIssue{{Level: "error", Code: "NO_TABLE", Message: "x"}},
 		FixHints: []catalog.FixHint{{Code: "NO_TABLE", Suggestion: "use catalog names"}},
 	}
-	kit := s.repairKit("validation", "", v)
+	kit := s.repairKit(s.cat(), "validation", "", v)
 	if kit["phase"] != "validation" {
 		t.Fatal("phase")
 	}
@@ -50,7 +50,7 @@ func TestRepairKitValidationPhase(t *testing.T) {
 func TestRepairKitExecutionPhaseCarriesCode(t *testing.T) {
 	s := &Server{}
 	s.setCatalog(&catalog.Catalog{Tables: map[string]*catalog.Table{}})
-	kit := s.repairKit("execution", "ERROR: column \"foo\" does not exist (SQLSTATE 42703)", catalog.ValidationResult{})
+	kit := s.repairKit(s.cat(), "execution", "ERROR: column \"foo\" does not exist (SQLSTATE 42703)", catalog.ValidationResult{})
 	if kit["error_code"] != "PG-42703" {
 		t.Fatalf("expected PG-42703, got %v", kit["error_code"])
 	}

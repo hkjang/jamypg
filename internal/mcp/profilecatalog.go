@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,72 @@ import (
 // under the main dataset dir so it works in standalone mode.
 func (s *Server) profileCatalogDir(profileID string) string {
 	return filepath.Join(s.opDir(), "profiles", sanitizeProfileID(profileID))
+}
+
+// ---- workspace catalog cache (per-request profile catalogs) ----
+
+// wsCacheEntry caches a compiled workspace catalog together with a fingerprint
+// of its JSON files, so edits (put_profile_dataset, build, OM import) are
+// picked up automatically without an explicit reload call.
+type wsCacheEntry struct {
+	cat *catalog.Catalog
+	fp  string
+}
+
+// workspaceFingerprint hashes the workspace's JSON file names+sizes+mtimes.
+func workspaceFingerprint(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			fmt.Fprintf(&b, "%s|%d|%d;", e.Name(), info.Size(), info.ModTime().UnixNano())
+		}
+	}
+	return b.String()
+}
+
+// workspaceCatalog returns the compiled catalog for a profile's workspace,
+// loading and caching it (fingerprint-invalidated). ok=false when the profile
+// has no workspace or it fails to compile.
+func (s *Server) workspaceCatalog(profileID string) (*catalog.Catalog, bool) {
+	dir := s.profileCatalogDir(profileID)
+	if _, err := os.Stat(filepath.Join(dir, "meta_physical_models.json")); err != nil {
+		return nil, false
+	}
+	fp := workspaceFingerprint(dir)
+
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.wsCache == nil {
+		s.wsCache = map[string]wsCacheEntry{}
+	}
+	if e, ok := s.wsCache[profileID]; ok && e.fp == fp && fp != "" {
+		return e.cat, true
+	}
+	cat, err := catalog.Load(dir)
+	if err != nil {
+		return nil, false
+	}
+	s.wsCache[profileID] = wsCacheEntry{cat: cat, fp: fp}
+	return cat, true
+}
+
+// catalogFor picks the catalog a request should use: the profile's workspace
+// when one exists for the given profile id, else the active global catalog.
+// The second return names the source for response transparency.
+func (s *Server) catalogFor(profileID string) (*catalog.Catalog, string) {
+	if strings.TrimSpace(profileID) != "" {
+		if ws, ok := s.workspaceCatalog(profileID); ok {
+			return ws, "profile-workspace:" + profileID
+		}
+	}
+	return s.cat(), "active"
 }
 
 // ensureWorkspaceScaffold creates the minimal required dataset files so
