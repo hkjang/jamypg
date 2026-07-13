@@ -16,7 +16,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(65종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(66종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -364,6 +364,7 @@ Invoke-RestMethod `
 - `list_metadata_sources` — 자동 메타데이터 수집 원천으로 쓸 수 있는 DB 프로파일(source_id/name/type/마스킹 접속대상) 목록. 물리 메타데이터는 자동 수집하되 업무 의미는 승인 기반으로 관리
 - `discover_metadata` — 원천 DB의 비시스템 스키마 목록 조회(information_schema만 읽는 read-only). 수집 범위 지정용
 - `db_health_report` — **DBA 헬스 점검**: 연결된 프로파일 DB의 시스템 카탈로그를 읽어 PK 없는 테이블(high)·인덱스 없는 FK 컬럼(medium)·미사용 인덱스(low)·통계 오래됨/없음(medium)·대형 테이블(코멘트 여부, info)을 진단. PostgreSQL 전체, MySQL/MariaDB는 이식 가능 항목만. 읽기 전용(수정·실행 없음, 개선은 DBA 검토 후)
+- `suggest_indexes` — **인덱스 어드바이저**: 쿼리 감사 로그(query-*.jsonl)에서 느린 성공 쿼리를 분석해 인덱스가 없는 WHERE/JOIN/ORDER BY 컬럼을 집계하고, 영향도(발생 횟수 × 평균 지연) 순으로 후보 인덱스를 제안. 각 후보에 검토용 `CREATE INDEX` DDL과 대표 쿼리 포함. 읽기 전용·권고용(자동 생성하지 않으며 DBA가 카디널리티·쓰기부하 검토 후 수행). `profile`(선택)·`min_elapsed_ms`(기본 200)·`days`(기본 7)
 - `describe_db_schema` — 연결된 프로파일 DB의 **라이브 스키마**(information_schema)를 조회해 카탈로그에 없는 테이블도 SQL 생성 근거로 제공. **카탈로그 우선**: 등록된 테이블/컬럼엔 논리명·설명을 함께 붙이고 `in_catalog` 플래그로 구분. 읽기 전용·비저장. 라이브 전용 테이블을 검증까지 통과시키려면 `apply_metadata_sync`로 반영
 - `run_metadata_sync` — 원천 DB의 물리 모델(스키마·테이블·뷰·컬럼·PK/FK/Unique/Check·인덱스·코멘트·행수추정)을 버전 스냅숏으로 수집하고 이전 스냅숏 대비 변경분을 반환. 기본 증분(스키마 해시 동일 시 스킵). 삭제는 즉시 반영하지 않고 폐기 후보로 표시. **물리 정보만 수집하며 업무 의미(논리명·지표)는 운영 카탈로그에 쓰지 않음**
 - `apply_metadata_sync` — **(관리자)** 원천의 최신 스냅숏을 카탈로그에 **자동 반영**: 물리 모델(컬럼·타입·NULL·PK/FK·FK 관계)을 meta_physical_models.json/topology_relations.json에 병합(백업)하고 핫리로드. 물리 사실은 자동 반영하되 **기존 설명(업무 의미)은 보존**, 삭제분은 `prune=true`가 아니면 폐기 후보로만 표시. 스케줄러 `-sync-apply`로 매 싱크 시 자동 실행 가능

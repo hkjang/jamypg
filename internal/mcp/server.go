@@ -461,6 +461,11 @@ func (s *Server) tools() []map[string]any {
 			"incremental":   boolSchema("true (default) → skip when the schema hash is unchanged; false → always snapshot and diff"),
 			"include_views": boolSchema("Collect views/materialized views and their SQL (default false)"),
 		}, []string{"source"})),
+		tool("suggest_indexes", "Index advisor: mine the query audit log for slow, successful queries and propose candidate indexes for the WHERE/JOIN/ORDER-BY columns that lack one, ranked by impact (occurrences × avg latency), each with ready-to-review CREATE INDEX DDL and a sample query. Read-only and ADVISORY — it never creates anything; a DBA reviews the DDL (considering cardinality and write overhead). Uses the profile's workspace catalog when one exists.", objectSchema(map[string]any{
+			"profile":        str("Optional DB profile id to scope the audit log; omit for all"),
+			"min_elapsed_ms": integer("Slow-query threshold in ms (default 200)"),
+			"days":           integer("How many days of audit log to scan (default 7)"),
+		}, nil)),
 		tool("db_health_report", "DBA health check: run read-only system-catalog diagnostics against a connected DB profile and flag classic issues — tables without a primary key (high), foreign-key columns lacking a supporting index (medium), unused indexes (low), stale/absent planner statistics (medium), and the largest tables with comment coverage (info). PostgreSQL runs all checks; MySQL/MariaDB run the portable subset and mark the rest unsupported. Read-only (pg_catalog/information_schema); nothing is changed — remediation (CREATE INDEX, ANALYZE) is left to the DBA.", objectSchema(map[string]any{
 			"profile": str("DB profile id to diagnose"),
 		}, []string{"profile"})),
@@ -747,6 +752,7 @@ var dbProfileTools = map[string]bool{
 	"describe_db_schema":      true,
 	"build_profile_catalog":   true,
 	"db_health_report":        true,
+	"suggest_indexes":         true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -1006,6 +1012,21 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			return map[string]any{"status": "forbidden", "error": err.Error()}, nil
 		}
 		return s.mcpDBHealthReport(ctx, a.Profile), nil
+	case "suggest_indexes":
+		var a struct {
+			Profile      string `json:"profile"`
+			MinElapsedMs int    `json:"min_elapsed_ms"`
+			Days         int    `json:"days"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Profile != "" {
+			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+				return map[string]any{"status": "forbidden", "error": err.Error()}, nil
+			}
+		}
+		return s.mcpSuggestIndexes(a.Profile, a.MinElapsedMs, a.Days), nil
 	case "list_profile_catalogs":
 		return s.listProfileCatalogs(ctx), nil
 	case "get_profile_catalog":

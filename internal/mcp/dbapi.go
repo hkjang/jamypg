@@ -344,6 +344,27 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.mcpDBHealthReport(r.Context(), req.Profile))
 	})
+	mux.HandleFunc("POST /api/db/index-advisor", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Profile      string `json:"profile"`
+			MinElapsedMs int    `json:"min_elapsed_ms"`
+			Days         int    `json:"days"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		if req.Profile != "" {
+			if err := s.canUseProfileID(r.Context(), actor, req.Profile); err != nil {
+				writeAPIError(w, http.StatusForbidden, err)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, s.mcpSuggestIndexes(req.Profile, req.MinElapsedMs, req.Days))
+	})
 	mux.HandleFunc("POST /api/metadata/describe", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)
 		if !ok {
