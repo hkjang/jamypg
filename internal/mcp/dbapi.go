@@ -365,6 +365,66 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.mcpSuggestIndexes(req.Profile, req.MinElapsedMs, req.Days))
 	})
+	mux.HandleFunc("POST /api/db/workload", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Profile string `json:"profile"`
+			Days    int    `json:"days"`
+			SlowMs  int    `json:"slow_ms"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		if req.Profile != "" {
+			if err := s.canUseProfileID(r.Context(), actor, req.Profile); err != nil {
+				writeAPIError(w, http.StatusForbidden, err)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, s.mcpWorkloadReport(req.Profile, req.Days, req.SlowMs))
+	})
+	mux.HandleFunc("POST /api/query/lint", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.requireQueryActor(w, r); !ok {
+			return
+		}
+		var req struct {
+			SQL     string `json:"sql"`
+			Profile string `json:"profile"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if strings.TrimSpace(req.SQL) == "" {
+			writeAPIError(w, http.StatusBadRequest, errEmpty("sql is required"))
+			return
+		}
+		vcat, src := s.catalogFor(req.Profile)
+		findings := vcat.LintSQL(req.SQL)
+		writeJSON(w, http.StatusOK, map[string]any{"findings": findings, "count": len(findings), "catalog_source": src})
+	})
+	mux.HandleFunc("POST /api/query/explain-words", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.requireQueryActor(w, r); !ok {
+			return
+		}
+		var req struct {
+			SQL     string `json:"sql"`
+			Profile string `json:"profile"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if strings.TrimSpace(req.SQL) == "" {
+			writeAPIError(w, http.StatusBadRequest, errEmpty("sql is required"))
+			return
+		}
+		vcat, _ := s.catalogFor(req.Profile)
+		writeJSON(w, http.StatusOK, vcat.ExplainSQLWords(req.SQL))
+	})
 	mux.HandleFunc("POST /api/metadata/describe", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)
 		if !ok {

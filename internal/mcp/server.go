@@ -466,6 +466,19 @@ func (s *Server) tools() []map[string]any {
 			"min_elapsed_ms": integer("Slow-query threshold in ms (default 200)"),
 			"days":           integer("How many days of audit log to scan (default 7)"),
 		}, nil)),
+		tool("lint_sql", "SQL anti-pattern linter: statically scan one statement for classic performance/correctness smells — SELECT *, leading-wildcard LIKE, NOT IN (subquery), function-wrapped indexed columns (non-sargable), inequality on an indexed column, implicit comma cross-join, OR in WHERE, ORDER BY without LIMIT, and DML without WHERE — each with a severity and a concrete fix suggestion. Catalog-aware (index coverage) and advisory: it flags, it does not rewrite. Read-only.", objectSchema(map[string]any{
+			"sql":     str("SQL statement to lint"),
+			"profile": str("Optional DB profile id: lint against that profile's catalog workspace (index coverage) instead of the active catalog"),
+		}, []string{"sql"})),
+		tool("explain_sql_in_words", "Describe a SQL statement in plain Korean: which tables (with catalog logical names), what it filters/joins/groups/orders on, and which aggregates it computes, plus a one-line prose summary. Static structural analysis — it does not execute the query. Useful for reviewing generated SQL or documenting a query's intent.", objectSchema(map[string]any{
+			"sql":     str("SQL statement to explain"),
+			"profile": str("Optional DB profile id: resolve table logical names from that profile's catalog workspace"),
+		}, []string{"sql"})),
+		tool("workload_report", "Workload report: aggregate the query audit log over a window into an operational profile — total/success/error counts and error rate, latency percentiles (avg/p50/p95/p99/max), slow-query count, hottest tables, top error codes, usage by tool and by profile, the slowest statements, and the busiest hour. Read-only summary of what already ran. Pair with suggest_indexes (index candidates) and lint_sql (per-statement smells).", objectSchema(map[string]any{
+			"profile": str("Optional DB profile id to scope the report; omit for all"),
+			"days":    integer("How many days of audit log to scan (default 7)"),
+			"slow_ms": integer("Slow-query threshold in ms (default 200)"),
+		}, nil)),
 		tool("db_health_report", "DBA health check: run read-only system-catalog diagnostics against a connected DB profile and flag classic issues — tables without a primary key (high), foreign-key columns lacking a supporting index (medium), unused indexes (low), stale/absent planner statistics (medium), and the largest tables with comment coverage (info). PostgreSQL runs all checks; MySQL/MariaDB run the portable subset and mark the rest unsupported. Read-only (pg_catalog/information_schema); nothing is changed — remediation (CREATE INDEX, ANALYZE) is left to the DBA.", objectSchema(map[string]any{
 			"profile": str("DB profile id to diagnose"),
 		}, []string{"profile"})),
@@ -753,6 +766,7 @@ var dbProfileTools = map[string]bool{
 	"build_profile_catalog":   true,
 	"db_health_report":        true,
 	"suggest_indexes":         true,
+	"workload_report":         true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -1027,6 +1041,53 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			}
 		}
 		return s.mcpSuggestIndexes(a.Profile, a.MinElapsedMs, a.Days), nil
+	case "lint_sql":
+		var a struct {
+			SQL     string `json:"sql"`
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(a.SQL) == "" {
+			return map[string]any{"status": "error", "error": "sql is required"}, nil
+		}
+		vcat, src := s.catalogFor(a.Profile)
+		findings := vcat.LintSQL(a.SQL)
+		return map[string]any{
+			"findings":       findings,
+			"count":          len(findings),
+			"catalog_source": src,
+			"note":           "정적 안티패턴 점검(권고용). 실행하지 않으며 SQL을 자동 수정하지 않습니다.",
+		}, nil
+	case "explain_sql_in_words":
+		var a struct {
+			SQL     string `json:"sql"`
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(a.SQL) == "" {
+			return map[string]any{"status": "error", "error": "sql is required"}, nil
+		}
+		vcat, _ := s.catalogFor(a.Profile)
+		return vcat.ExplainSQLWords(a.SQL), nil
+	case "workload_report":
+		var a struct {
+			Profile string `json:"profile"`
+			Days    int    `json:"days"`
+			SlowMs  int    `json:"slow_ms"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Profile != "" {
+			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+				return map[string]any{"status": "forbidden", "error": err.Error()}, nil
+			}
+		}
+		return s.mcpWorkloadReport(a.Profile, a.Days, a.SlowMs), nil
 	case "list_profile_catalogs":
 		return s.listProfileCatalogs(ctx), nil
 	case "get_profile_catalog":
