@@ -465,6 +465,7 @@ func (s *Server) tools() []map[string]any {
 			"profile":        str("Optional DB profile id to scope the audit log; omit for all"),
 			"min_elapsed_ms": integer("Slow-query threshold in ms (default 200)"),
 			"days":           integer("How many days of audit log to scan (default 7)"),
+			"verify":         boolSchema("When true and a profile is given, run a live EXPLAIN (read-only) on each top candidate's sample query to confirm a full/seq scan on the table — trims false positives; sets plan_confirms/plan_cost"),
 		}, nil)),
 		tool("lint_sql", "SQL anti-pattern linter: statically scan one statement for classic performance/correctness smells — SELECT *, leading-wildcard LIKE, NOT IN (subquery), function-wrapped indexed columns (non-sargable), inequality on an indexed column, implicit comma cross-join, OR in WHERE, ORDER BY without LIMIT, and DML without WHERE — each with a severity and a concrete fix suggestion. Catalog-aware (index coverage) and advisory: it flags, it does not rewrite. Read-only.", objectSchema(map[string]any{
 			"sql":     str("SQL statement to lint"),
@@ -1037,6 +1038,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			Profile      string `json:"profile"`
 			MinElapsedMs int    `json:"min_elapsed_ms"`
 			Days         int    `json:"days"`
+			Verify       bool   `json:"verify"`
 		}
 		if err := decodeArgs(req.Arguments, &a); err != nil {
 			return nil, err
@@ -1046,7 +1048,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 				return map[string]any{"status": "forbidden", "error": err.Error()}, nil
 			}
 		}
-		return s.mcpSuggestIndexes(a.Profile, a.MinElapsedMs, a.Days), nil
+		return s.suggestIndexesVerified(ctx, a.Profile, a.MinElapsedMs, a.Days, a.Verify), nil
 	case "lint_sql":
 		var a struct {
 			SQL     string `json:"sql"`

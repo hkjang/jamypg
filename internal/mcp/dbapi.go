@@ -356,6 +356,7 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 			Profile      string `json:"profile"`
 			MinElapsedMs int    `json:"min_elapsed_ms"`
 			Days         int    `json:"days"`
+			Verify       bool   `json:"verify"`
 		}
 		if r.Body != nil {
 			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
@@ -366,7 +367,7 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 				return
 			}
 		}
-		writeJSON(w, http.StatusOK, s.mcpSuggestIndexes(req.Profile, req.MinElapsedMs, req.Days))
+		writeJSON(w, http.StatusOK, s.suggestIndexesVerified(r.Context(), req.Profile, req.MinElapsedMs, req.Days, req.Verify))
 	})
 	mux.HandleFunc("POST /api/db/workload", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.requireQueryActor(w, r)

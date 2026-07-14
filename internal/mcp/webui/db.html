@@ -504,6 +504,11 @@ async function qRun(preview) {
       if (d.columns) okMsg += '\n⚠ NULL 과다 컬럼: ' + d.columns.join(', ');
       if (d.truncated_note) okMsg += '\n💡 ' + d.truncated_note;
     }
+    if (r.lint_warnings && r.lint_warnings.length) {
+      okMsg += '\n\n🩺 SQL 린트 (권고 · 실행에는 영향 없음):';
+      r.lint_warnings.forEach(f => okMsg += '\n  [' + (f.severity || '') + '] ' + f.rule + ' — ' + f.message +
+        (f.suggestion ? '\n     💡 ' + f.suggestion : ''));
+    }
     showQ(res.row_count === 0 ? 'info' : 'ok', okMsg);
     renderRS(res);
     refreshHistory();

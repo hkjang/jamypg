@@ -24,6 +24,12 @@ type indexCandidate struct {
 	DDL         string  `json:"ddl"`         // suggested CREATE INDEX
 	SampleSQL   string  `json:"sample_sql"`  // one representative slow query
 	Score       float64 `json:"score"`       // occurrences * avg_ms (ranking)
+
+	// populated only when verify=true and a profile is given (live EXPLAIN)
+	Verified     bool   `json:"verified,omitempty"`      // an EXPLAIN was run for this candidate
+	PlanConfirms bool   `json:"plan_confirms,omitempty"` // plan shows a full/seq scan on the table
+	PlanCost     int64  `json:"plan_cost,omitempty"`     // estimated total cost from EXPLAIN
+	VerifyNote   string `json:"verify_note,omitempty"`
 }
 
 // mcpSuggestIndexes analyzes the query audit log and proposes indexes.

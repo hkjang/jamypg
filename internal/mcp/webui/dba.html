@@ -67,6 +67,14 @@
   <span class="msg" id="msg"></span>
 </header>
 <main>
+  <div class="card" id="digestBanner" style="display:none;background:linear-gradient(90deg,#101a2e,#1d2b47);color:#e8eefc;border:none">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;opacity:.7">DBA 다이제스트</span>
+      <b id="digestHeadline" style="font-size:15px"></b>
+      <span class="grow"></span>
+      <span id="digestMeta" class="mini" style="color:#9db4dd"></span>
+    </div>
+  </div>
   <div class="tabs" id="tabs">
     <button class="tab active" data-p="health">헬스 점검</button>
     <button class="tab" data-p="index">인덱스 제안</button>
@@ -296,15 +304,23 @@ $('wlRun').onclick=runWorkload;
 $('lintRun').onclick=runLint;
 $('expRun').onclick=runExplain;
 
+function loadDigest(){
+  post('/api/db/digest',{profile:prof(),days:7}).then(function(d){
+    if(d.error||d.headline==null){$('digestBanner').style.display='none';return;}
+    $('digestHeadline').textContent=d.headline;
+    $('digestMeta').textContent='최근 '+(d.window_days||7)+'일 · 쿼리 '+(d.total_queries||0)+' · 인덱스 후보 '+(d.index_candidate_count||0)+(prof()?(' · '+prof()):' · 전체');
+    $('digestBanner').style.display='block';
+  }).catch(function(){$('digestBanner').style.display='none';});
+}
 function loadProfiles(){
   return fetch('/api/db-profiles',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
     var ps=d.profiles||[];var last=localStorage.getItem('jasqlLastProfile');
     $('profile').innerHTML=(ps.length?ps.map(function(p){return '<option value="'+esc(p.id)+'"'+(p.id===last?' selected':'')+'>'+esc(p.id)+(p.name?' — '+esc(p.name):'')+'</option>';}).join(''):'<option value="">프로파일 없음</option>');
-    $('profile').onchange=function(){localStorage.setItem('jasqlLastProfile',$('profile').value);};
+    $('profile').onchange=function(){localStorage.setItem('jasqlLastProfile',$('profile').value);loadDigest();};
   }).catch(function(){});
 }
 
-JASQL.mount({ page:'dba', onReady:function(me){ if(me&&me.version)$('scope').textContent='v'+me.version; loadProfiles(); }});
+JASQL.mount({ page:'dba', onReady:function(me){ if(me&&me.version)$('scope').textContent='v'+me.version; loadProfiles().then(loadDigest); }});
 </script>
 </body>
 </html>
