@@ -122,6 +122,11 @@ func (s *Server) omImport(ctx context.Context, scope string, maxTables int, incl
 	res := s.cat().ImportExternalMetadata(imp, apply, time.Now())
 	res["fetched_tables"] = fetched
 	if applied, _ := res["applied"].(bool); applied {
+		// meta-DB mode: persist before reload or the import is reverted
+		if err := s.persistDatasetsToDB("overrides.json", "glossary.json"); err != nil {
+			res["persist_error"] = "files applied but meta DB write failed: " + err.Error()
+			return res
+		}
 		if reload, rerr := s.reloadCatalog(); rerr == nil {
 			res["reloaded"] = reload
 		} else {

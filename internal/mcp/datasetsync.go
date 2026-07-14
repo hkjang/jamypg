@@ -66,6 +66,40 @@ func (s *Server) materializeDatasets(ctx context.Context) error {
 	return nil
 }
 
+// persistDatasetsToDB pushes the current on-disk content of the named dataset
+// files back into the meta DB (the source of truth in auth mode). Direct
+// file-writing apply paths (metadata-sync apply, review apply, OpenMetadata
+// import, golden promote) MUST call this before any reload: reload
+// re-materializes files FROM the DB, so an unpersisted file write would be
+// silently reverted. No-op in standalone mode. Accepts dataset names or file
+// names (registry-resolved).
+func (s *Server) persistDatasetsToDB(namesOrFiles ...string) error {
+	if !s.datasetsInDB() {
+		return nil
+	}
+	dataDir := s.cat().DataDir
+	for _, n := range namesOrFiles {
+		var name, file string
+		for _, d := range catalog.FileBackedDatasets() {
+			if d.Name == n || d.File == n {
+				name, file = d.Name, d.File
+				break
+			}
+		}
+		if file == "" {
+			continue // not a registry dataset (e.g. workspace-only file)
+		}
+		b, err := os.ReadFile(filepath.Join(dataDir, file))
+		if err != nil {
+			continue // file absent — nothing to persist
+		}
+		if err := s.Meta.Store.PutDataset(context.Background(), name, b, "apply"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // syncAndReload materializes DB datasets to disk and recompiles the catalog,
 // hot-swapping on success. Used at startup and after DB-routed changes.
 func (s *Server) syncAndReload(ctx context.Context) error {

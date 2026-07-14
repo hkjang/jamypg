@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -108,10 +110,35 @@ func (s *Server) mcpApplyMetadataSync(sourceID string, prune bool) map[string]an
 	if errMsg, _ := res["error"].(string); errMsg != "" {
 		return res
 	}
+	// meta-DB mode: persist the file writes to the DB BEFORE reloading —
+	// reload re-materializes files from the DB, so skipping this would
+	// silently revert the apply (the "sync never reflects" bug).
+	if err := s.persistDatasetsToDB("meta_physical_models.json", "topology_relations.json"); err != nil {
+		res["persist_error"] = "catalog files applied but meta DB write failed: " + err.Error()
+		return res
+	}
 	if reload, rerr := s.reloadCatalog(); rerr == nil {
 		res["reloaded"] = reload
 	} else {
 		res["reload_error"] = rerr.Error()
+	}
+	// also reflect the same snapshot into the source profile's catalog
+	// workspace when one exists: profile-scoped requests (catalogFor) and the
+	// profile-catalogs UI read the workspace, not the active catalog, so
+	// without this the apply is invisible for that profile.
+	wsDir := s.profileCatalogDir(sourceID)
+	if _, err := os.Stat(filepath.Join(wsDir, "meta_physical_models.json")); err == nil {
+		pc := &catalog.Catalog{DataDir: wsDir, Tables: map[string]*catalog.Table{}}
+		wres := pc.ApplyPhysicalSnapshot(cols, rels, prune, sourceID, time.Now())
+		if em, _ := wres["error"].(string); em != "" {
+			res["workspace_error"] = em
+		} else {
+			res["workspace_applied"] = map[string]any{
+				"dir":             wsDir,
+				"columns_added":   wres["columns_added"],
+				"columns_updated": wres["columns_updated"],
+			}
+		}
 	}
 	return res
 }

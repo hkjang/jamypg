@@ -326,6 +326,12 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		}
 		res := s.cat().PromoteGolden(req.FeedbackIDs, time.Now())
 		if applied, _ := res["applied"].(int); applied > 0 {
+			// meta-DB mode: persist before reload or the promotion is reverted
+			if err := s.persistDatasetsToDB("golden_queries.json"); err != nil {
+				res["persist_error"] = "file applied but meta DB write failed: " + err.Error()
+				writeJSON(w, http.StatusOK, res)
+				return
+			}
 			if reload, err := s.reloadCatalog(); err == nil {
 				res["reloaded"] = reload
 			} else {

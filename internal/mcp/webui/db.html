@@ -72,20 +72,6 @@
 
 <main>
   <div class="card">
-    <details class="guide" open>
-      <summary>📖 사용 안내 — DB 프로파일을 등록하고, 테스트한 뒤, 아래 콘솔에서 Read-Only 쿼리를 실행합니다</summary>
-      <ul>
-        <li><b>실행 요건</b>: 서버가 <code>-tags oracle</code>로 빌드되고 실행 환경에 <b>Oracle Instant Client</b>가 있어야 실제 실행이 가능합니다. 상단 칩이 <b>드라이버 없음</b>이면 프로파일 관리·SQL 검증만 동작합니다 (docs/oracle-connector.md 참조).</li>
-        <li><b>접속 문자열</b>: Easy Connect <code>host:1521/SERVICE</code>, VIP <code>vip-host:1521/SERVICE?connect_timeout=5&amp;expire_time=2</code>, TNS <code>(DESCRIPTION=...)</code>, 암호화 <code>tcps://...</code> 모두 지원.</li>
-        <li><b>비밀번호</b>: 평문 저장 금지 — <code>env:변수명</code>(권장) 또는 <code>file:/run/secrets/파일</code>을 사용하세요. <code>plain:값</code>은 개발용입니다.</li>
-        <li><b>안전장치</b>: SELECT/WITH만 허용, DML/DDL/PLSQL/트랜잭션/DBMS_·UTL_ 차단, 다중 statement 차단, 쿼리 타임아웃, 결과 <code>max_rows</code> 제한(초과 시 <code>truncated=true</code>), 응답 바이트 캡, 연속 3회 실패 시 30초 서킷브레이커, 전 실행 감사 로그(<code>audit/query-*.jsonl</code>).</li>
-        <li><b>계정</b>: SELECT 권한만 가진 전용 계정을 사용하세요 — 서버 차단과 별개로 DB 권한이 최종 방어선입니다.</li>
-        <li><b>실행 순서</b>: 프로파일 등록 → [접속 테스트] 초록 확인 → 콘솔에서 ①[검증] → ②[실행계획](실제 EXPLAIN PLAN — full scan/카티션/예상행 과다를 실행 전에 탐지, high면 조건 보강) → ③[미리보기](기본 건수) → ④필요 시 [실행]. 오래 걸리면 실행 중 목록에서 [취소].</li>
-      </ul>
-    </details>
-  </div>
-
-  <div class="card">
     <div class="toolbar" style="justify-content:space-between">
       <h2 style="margin:0">DB 프로파일</h2>
       <span>

@@ -1561,6 +1561,11 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		}
 		res := s.cat().PromoteGolden(a.FeedbackIDs, time.Now())
 		if applied, _ := res["applied"].(int); applied > 0 {
+			// meta-DB mode: persist before reload or the promotion is reverted
+			if err := s.persistDatasetsToDB("golden_queries.json"); err != nil {
+				res["persist_error"] = "file applied but meta DB write failed: " + err.Error()
+				return res, nil
+			}
 			if reload, err := s.reloadCatalog(); err == nil {
 				res["reloaded"] = reload
 			} else {
@@ -1795,6 +1800,11 @@ func (s *Server) applyApprovedCandidates() (map[string]any, error) {
 	}
 	if applied, _ := res["applied"].(int); applied == 0 {
 		return res, nil // nothing written; skip the reload
+	}
+	// meta-DB mode: persist before reload or the merge is reverted
+	if err := s.persistDatasetsToDB("overrides.json", "metrics.json", "topology_relations.json", "meta_code_dict.json"); err != nil {
+		res["persist_error"] = "files applied but meta DB write failed: " + err.Error()
+		return res, nil
 	}
 	reload, err := s.reloadCatalog()
 	if err != nil {
