@@ -21,6 +21,8 @@ type SchedulerConfig struct {
 	OpenMetadata      bool          // optional: import from OpenMetadata each tick
 	OpenMetadataScope string        // optional scope FQN for the import
 	ApplySync         bool          // optional: auto-apply the sync snapshot to the catalog
+	DBADigest         bool          // optional: also POST the DBA digest to the webhook each tick
+	DBADigestProfile  string        // optional: scope the DBA digest to this profile (empty = all)
 }
 
 func (c SchedulerConfig) enabled() bool {
@@ -58,6 +60,11 @@ func (s *Server) StartScheduler(ctx context.Context, cfg SchedulerConfig) {
 				}
 				if cfg.WebhookURL != "" {
 					s.postDigestWebhook(ctx, cfg.WebhookURL, s.MetadataDigest())
+					if cfg.DBADigest {
+						dg := s.mcpDBADigest(cfg.DBADigestProfile, 0, 0)
+						log.Printf("scheduled dba digest: %v", dg["headline"])
+						s.postDigestWebhook(ctx, cfg.WebhookURL, dg)
+					}
 				}
 			}
 		}

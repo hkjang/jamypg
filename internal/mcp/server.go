@@ -479,6 +479,11 @@ func (s *Server) tools() []map[string]any {
 			"days":    integer("How many days of audit log to scan (default 7)"),
 			"slow_ms": integer("Slow-query threshold in ms (default 200)"),
 		}, nil)),
+		tool("get_dba_digest", "Compact proactive DBA snapshot distilled from the workload report and index advisor: query volume, error rate, p95/max latency, slow-query count, hottest tables, and the top index candidates, with a one-line headline. Read-only. Same data the scheduler posts to the digest webhook each tick — use for a periodic 'what needs attention' glance.", objectSchema(map[string]any{
+			"profile": str("Optional DB profile id to scope the digest; omit for all"),
+			"days":    integer("How many days of audit log to summarize (default 7)"),
+			"slow_ms": integer("Slow-query threshold in ms (default 200)"),
+		}, nil)),
 		tool("db_health_report", "DBA health check: run read-only system-catalog diagnostics against a connected DB profile and flag classic issues — tables without a primary key (high), foreign-key columns lacking a supporting index (medium), unused indexes (low), stale/absent planner statistics (medium), and the largest tables with comment coverage (info). PostgreSQL runs all checks; MySQL/MariaDB run the portable subset and mark the rest unsupported. Read-only (pg_catalog/information_schema); nothing is changed — remediation (CREATE INDEX, ANALYZE) is left to the DBA.", objectSchema(map[string]any{
 			"profile": str("DB profile id to diagnose"),
 		}, []string{"profile"})),
@@ -767,6 +772,7 @@ var dbProfileTools = map[string]bool{
 	"db_health_report":        true,
 	"suggest_indexes":         true,
 	"workload_report":         true,
+	"get_dba_digest":          true,
 }
 
 // authorizeDBProfileTool closes token-gate gaps between DB-touching tools.
@@ -1088,6 +1094,21 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			}
 		}
 		return s.mcpWorkloadReport(a.Profile, a.Days, a.SlowMs), nil
+	case "get_dba_digest":
+		var a struct {
+			Profile string `json:"profile"`
+			Days    int    `json:"days"`
+			SlowMs  int    `json:"slow_ms"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		if a.Profile != "" {
+			if err := s.canUseProfileID(ctx, userFrom(ctx), a.Profile); err != nil {
+				return map[string]any{"status": "forbidden", "error": err.Error()}, nil
+			}
+		}
+		return s.mcpDBADigest(a.Profile, a.Days, a.SlowMs), nil
 	case "list_profile_catalogs":
 		return s.listProfileCatalogs(ctx), nil
 	case "get_profile_catalog":

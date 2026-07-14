@@ -389,6 +389,27 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, s.mcpWorkloadReport(req.Profile, req.Days, req.SlowMs))
 	})
+	mux.HandleFunc("POST /api/db/digest", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := s.requireQueryActor(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Profile string `json:"profile"`
+			Days    int    `json:"days"`
+			SlowMs  int    `json:"slow_ms"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		}
+		if req.Profile != "" {
+			if err := s.canUseProfileID(r.Context(), actor, req.Profile); err != nil {
+				writeAPIError(w, http.StatusForbidden, err)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, s.mcpDBADigest(req.Profile, req.Days, req.SlowMs))
+	})
 	mux.HandleFunc("POST /api/query/lint", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.requireQueryActor(w, r); !ok {
 			return

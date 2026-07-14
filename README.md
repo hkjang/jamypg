@@ -16,7 +16,7 @@ against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
-레퍼런스(69종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
+레퍼런스(70종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
 
 ## Quick Start
@@ -368,6 +368,7 @@ Invoke-RestMethod `
 - `lint_sql` — **SQL 안티패턴 린트**: 단일 문장을 정적 분석해 고전적 성능·정합성 스멜을 진단 — `SELECT *`, 선두 와일드카드 `LIKE '%…'`, `NOT IN (서브쿼리)`, 인덱스 컬럼을 함수로 감싼 비-sargable 조건, 인덱스 컬럼 부등호, 콤마 크로스 조인, `WHERE`의 `OR`, `LIMIT` 없는 `ORDER BY`, `WHERE` 없는 DML. 각 항목에 심각도와 개선 제안 포함. 카탈로그 인덱스 커버리지 인식·권고용(자동 수정 안 함). `sql`·`profile`(선택)
 - `explain_sql_in_words` — **SQL 자연어 설명**: SQL이 어떤 테이블(카탈로그 논리명)에서 무엇을 필터·조인·그룹·정렬하고 어떤 집계를 계산하는지 한국어로 요약. 정적 구조 분석(실행 안 함). `sql`·`profile`(선택)
 - `workload_report` — **워크로드 리포트**: 감사 로그를 기간별로 집계해 총/성공/오류 건수·오류율, 지연 분포(avg/p50/p95/p99/max), 느린 쿼리 수, 가장 많이 접근한 테이블, 상위 오류 코드, 툴·프로파일별 사용량, 가장 느린 문장, 피크 시간대를 리포트. 읽기 전용. `profile`(선택)·`days`(기본 7)·`slow_ms`(기본 200)
+- `get_dba_digest` — **DBA 다이제스트**: 워크로드 리포트와 인덱스 어드바이저를 압축한 능동형 운영 스냅샷 — 쿼리량·오류율·p95/최대 지연·느린 쿼리 수·핫 테이블·상위 인덱스 후보와 한 줄 헤드라인. 읽기 전용. 스케줄러(`-sync-interval` + `-digest-webhook` + `-dba-digest`)가 틱마다 웹훅으로 push하는 것과 동일한 데이터. `profile`(선택)·`days`(기본 7)·`slow_ms`(기본 200)
 - `describe_db_schema` — 연결된 프로파일 DB의 **라이브 스키마**(information_schema)를 조회해 카탈로그에 없는 테이블도 SQL 생성 근거로 제공. **카탈로그 우선**: 등록된 테이블/컬럼엔 논리명·설명을 함께 붙이고 `in_catalog` 플래그로 구분. 읽기 전용·비저장. 라이브 전용 테이블을 검증까지 통과시키려면 `apply_metadata_sync`로 반영
 - `run_metadata_sync` — 원천 DB의 물리 모델(스키마·테이블·뷰·컬럼·PK/FK/Unique/Check·인덱스·코멘트·행수추정)을 버전 스냅숏으로 수집하고 이전 스냅숏 대비 변경분을 반환. 기본 증분(스키마 해시 동일 시 스킵). 삭제는 즉시 반영하지 않고 폐기 후보로 표시. **물리 정보만 수집하며 업무 의미(논리명·지표)는 운영 카탈로그에 쓰지 않음**
 - `apply_metadata_sync` — **(관리자)** 원천의 최신 스냅숏을 카탈로그에 **자동 반영**: 물리 모델(컬럼·타입·NULL·PK/FK·FK 관계)을 meta_physical_models.json/topology_relations.json에 병합(백업)하고 핫리로드. 물리 사실은 자동 반영하되 **기존 설명(업무 의미)은 보존**, 삭제분은 `prune=true`가 아니면 폐기 후보로만 표시. 스케줄러 `-sync-apply`로 매 싱크 시 자동 실행 가능

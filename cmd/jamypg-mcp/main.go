@@ -40,6 +40,8 @@ func main() {
 		omToken        string
 		omSync         bool
 		omScope        string
+		dbaDigest      bool
+		dbaDigestProf  string
 	)
 	flag.StringVar(&dataDir, "data", filepath.Join("data", "metadb"), "Path to metadata dataset directory")
 	flag.StringVar(&transport, "transport", "http", "MCP transport: http or stdio")
@@ -61,6 +63,8 @@ func main() {
 	flag.DurationVar(&syncInterval, "sync-interval", 0, "Interval for the scheduler (e.g. 24h); 0 disables. Drives -sync-source and/or -digest-webhook")
 	flag.BoolVar(&syncApply, "sync-apply", false, "On each scheduled sync, auto-apply the collected physical model to the catalog (retire candidates kept). Requires -sync-source")
 	flag.StringVar(&digestWebhook, "digest-webhook", os.Getenv("JAMYPG_DIGEST_WEBHOOK"), "URL to POST the metadata digest JSON to on each scheduler tick (with -sync-interval)")
+	flag.BoolVar(&dbaDigest, "dba-digest", false, "On each scheduler tick, also POST the DBA digest (workload + index candidates) to -digest-webhook")
+	flag.StringVar(&dbaDigestProf, "dba-digest-profile", os.Getenv("JAMYPG_DBA_DIGEST_PROFILE"), "Optional DB profile id to scope the scheduled DBA digest (empty = all profiles)")
 	flag.StringVar(&omURL, "openmetadata-url", os.Getenv("JAMYPG_OPENMETADATA_URL"), "OpenMetadata base URL (e.g. http://host:8585) to import/export metadata")
 	flag.StringVar(&omToken, "openmetadata-token", os.Getenv("JAMYPG_OPENMETADATA_TOKEN"), "OpenMetadata bot JWT token (default: JAMYPG_OPENMETADATA_TOKEN env)")
 	flag.BoolVar(&omSync, "openmetadata-sync", false, "On each scheduler tick, apply an incremental OpenMetadata import (gaps only). Requires -sync-interval")
@@ -167,6 +171,7 @@ func main() {
 		srv.StartScheduler(context.Background(), mcp.SchedulerConfig{
 			Source: syncSource, Interval: syncInterval, WebhookURL: digestWebhook,
 			OpenMetadata: omSync, OpenMetadataScope: omScope, ApplySync: syncApply,
+			DBADigest: dbaDigest, DBADigestProfile: dbaDigestProf,
 		})
 	}
 	if err := mcp.ServeServer(addr, srv); err != nil {
