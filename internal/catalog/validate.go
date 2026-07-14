@@ -50,6 +50,7 @@ type ValidationResult struct {
 	ReferencedColumns []ColumnRef       `json:"referenced_columns,omitempty"`
 	BoundedSQL        string            `json:"bounded_sql,omitempty"`
 	RetryGuidance     string            `json:"retry_guidance,omitempty"`
+	Lint              []LintFinding     `json:"lint,omitempty"` // advisory anti-pattern findings (never block)
 }
 
 type tableRefInternal struct {
@@ -324,6 +325,9 @@ func (c *Catalog) ValidateSQL(req ValidateRequest) ValidationResult {
 	if !res.Valid {
 		res.RetryGuidance = "fix_hints를 반영해 SQL을 수정한 뒤 validate_sql을 다시 호출하세요. 자동 수정은 최대 2회까지만 시도하고, 그래도 실패하면 실패 원인과 수정 제안을 사용자에게 반환하세요."
 	}
+	// advisory anti-pattern lint rides along with the validation result; it never
+	// changes res.Valid (smells are warnings, not blockers).
+	res.Lint = c.LintSQL(sql)
 	return res
 }
 

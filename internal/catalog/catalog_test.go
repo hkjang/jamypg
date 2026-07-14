@@ -83,3 +83,21 @@ LIMIT 10`
 		t.Fatalf("expected valid SQL, errors = %+v", res.Errors)
 	}
 }
+
+func TestValidateSQLCarriesLint(t *testing.T) {
+	c := loadTestCatalog(t)
+	// SELECT * is valid but smelly → still Valid, but lint surfaces select_star
+	res := c.ValidateSQL(ValidateRequest{SQL: "SELECT * FROM PUBLIC.JAMYPG_MCP_ACTIVITY LIMIT 10", Limit: 10})
+	if !res.Valid {
+		t.Fatalf("SELECT * should remain valid (lint is advisory), errors = %+v", res.Errors)
+	}
+	found := false
+	for _, f := range res.Lint {
+		if f.Rule == "select_star" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected advisory lint 'select_star' in ValidationResult, got %+v", res.Lint)
+	}
+}

@@ -418,7 +418,7 @@ func (s *Server) tools() []map[string]any {
 			"top_k":    integer("Number of examples"),
 			"table":    str("Optional table filter"),
 		}, []string{"question"})),
-		tool("validate_sql", "Statically validate SQL against catalog tables, columns, join graph, PII policy, code-value dictionaries, dialect, and read-only rules. CTE/inline-view aware. Returns structured fix_hints; retry at most twice. Accepts expected_output_columns / metric_names aliases from prepare_sql_context. → next: explain_sql, then run_sql_safely.", objectSchema(map[string]any{
+		tool("validate_sql", "Statically validate SQL against catalog tables, columns, join graph, PII policy, code-value dictionaries, dialect, and read-only rules. CTE/inline-view aware. Returns structured fix_hints; retry at most twice. Accepts expected_output_columns / metric_names aliases from prepare_sql_context. Also returns advisory `lint` anti-pattern findings (SELECT *, leading-wildcard LIKE, non-sargable predicates, …) that never block validity. → next: explain_sql, then run_sql_safely.", objectSchema(map[string]any{
 			"sql":              str("SQL to validate"),
 			"limit":            integer("Preview row limit for bounded_sql"),
 			"metrics":          arrayOf("string", "Dictionary metric names this SQL claims to implement; checked against metric expressions"),
@@ -434,7 +434,7 @@ func (s *Server) tools() []map[string]any {
 		tool("route_db_profile", "Given a SQL statement, pick the DB profile that can actually serve it when many profiles are registered. Extracts the referenced tables via the dialect parser and scores each usable profile on live table inventory (does the DB really contain those tables), operator-declared routing.schemas, engine dialect, circuit-breaker health, and routing priority/default. Returns selected_profile with decisive=true when there is one clear winner, otherwise decisive=false with ranked candidates to choose from. run_sql_safely(profile=\"auto\") calls this internally.", objectSchema(map[string]any{
 			"sql": str("SQL whose target profile should be resolved"),
 		}, []string{"sql"})),
-		tool("run_sql_safely", "Validate SQL and, when a db profile is given, execute it read-only against the target DB (postgres/mysql/mariadb) with query timeout, row limit (+truncated flag), PII value masking, a 60s identical-query result cache (cached:true), and audit logging. Before executing it runs a live EXPLAIN plan-approval gate: if the estimated plan risk meets the profile threshold it returns status=plan_approval_required with the plan instead of running — narrow the query, or (only after user approval) re-call with approve_plan=true. Zero rows / NULL-heavy output come back with result_diagnosis hints. Without a profile it stays a dry-run guard returning bounded SQL. Catalog-invalid SQL is never executed.", objectSchema(map[string]any{
+		tool("run_sql_safely", "Validate SQL and, when a db profile is given, execute it read-only against the target DB (postgres/mysql/mariadb) with query timeout, row limit (+truncated flag), PII value masking, a 60s identical-query result cache (cached:true), and audit logging. Before executing it runs a live EXPLAIN plan-approval gate: if the estimated plan risk meets the profile threshold it returns status=plan_approval_required with the plan instead of running — narrow the query, or (only after user approval) re-call with approve_plan=true. Zero rows / NULL-heavy output come back with result_diagnosis hints. Successful responses may include advisory `lint_warnings` (SQL anti-patterns) — surface them but they do not block execution. Without a profile it stays a dry-run guard returning bounded SQL. Catalog-invalid SQL is never executed.", objectSchema(map[string]any{
 			"sql":             str("SQL to validate/execute"),
 			"limit":           integer("Row limit (capped by the profile's max_rows)"),
 			"profile":         str("DB profile id from db_profiles (see /admin/db); omit for dry-run"),
@@ -1323,6 +1323,9 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			"status":     "executed",
 			"validation": map[string]any{"valid": true, "warnings": len(v.Warnings)},
 			"result":     result,
+		}
+		if len(v.Lint) > 0 {
+			out["lint_warnings"] = v.Lint
 		}
 		if cached {
 			out["cached"] = true

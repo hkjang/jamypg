@@ -244,6 +244,9 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 				return
 			}
 			out := map[string]any{"executed": true, "result": result, "validation_warnings": len(v.Warnings)}
+			if len(v.Lint) > 0 {
+				out["lint_warnings"] = v.Lint
+			}
 			if cached {
 				out["cached"] = true
 			}
