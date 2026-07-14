@@ -8,7 +8,7 @@ var openAPISpec = `{
   "info": {
     "title": "JAMYPG NL2SQL MCP - Management & Query API",
     "version": "` + Version + `",
-    "description": "JAMYPG 관리·쿼리 REST API.\n\n인증 모드(meta DB 활성): 로그인 세션 쿠키, MCP 키(Authorization: Bearer jsk_... 또는 X-MCP-Key), 또는 마스터 토큰(X-Admin-Token)으로 인증합니다. admin 역할이 전체 관리 권한을 가지며, 일반 사용자는 본인 소유·grant·shared 프로파일과 본인 키만 다룹니다.\n단독 모드(meta DB 미설정): 로그인이 없고 -admin-token(또는 JAMYPG_ADMIN_TOKEN)으로 변경 API를 보호합니다.\n\n- 데이터셋 변경은 자동 백업 후 적용되고 카탈로그를 재기동 없이 핫스왑하며, 실패 시 자동 롤백됩니다.\n- 웹 콘솔: /admin (데이터셋), /admin/db (DB 연결·쿼리), /admin/users (사용자), /admin/keys (MCP 키), /auth/login (로그인)"
+    "description": "JAMYPG 관리·쿼리 REST API.\n\n인증 모드(meta DB 활성): 로그인 세션 쿠키, MCP 키(Authorization: Bearer jsk_... 또는 X-MCP-Key), 또는 마스터 토큰(X-Admin-Token)으로 인증합니다. admin 역할이 전체 관리 권한을 가지며, 일반 사용자는 본인 소유·grant·shared 프로파일과 본인 키만 다룹니다.\n단독 모드(meta DB 미설정): 로그인이 없고 -admin-token(또는 JAMYPG_ADMIN_TOKEN)으로 변경 API를 보호합니다.\n\n- 데이터셋 변경은 자동 백업 후 적용되고 카탈로그를 재기동 없이 핫스왑하며, 실패 시 자동 롤백됩니다.\n- 웹 콘솔: /admin (데이터셋), /admin/db (DB 연결·쿼리), /admin/dba (DBA 코파일럿), /admin/users (사용자), /admin/keys (MCP 키), /auth/login (로그인)"
   },
   "servers": [{ "url": "/" }],
   "tags": [
