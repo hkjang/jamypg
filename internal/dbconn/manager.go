@@ -188,11 +188,14 @@ func (m *Manager) breakerRecord(profileID string, err error) {
 // ---- ping ----
 
 type PingResult struct {
-	ProfileID string `json:"profile_id"`
-	OK        bool   `json:"ok"`
-	ElapsedMs int64  `json:"elapsed_ms"`
-	Error     string `json:"error,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"`
+	ProfileID string   `json:"profile_id"`
+	OK        bool     `json:"ok"`
+	ElapsedMs int64    `json:"elapsed_ms"`
+	Error     string   `json:"error,omitempty"`
+	ErrorCode string   `json:"error_code,omitempty"`
+	Category  string   `json:"category,omitempty"`
+	Hint      string   `json:"hint,omitempty"`
+	NextSteps []string `json:"next_steps,omitempty"`
 }
 
 func (m *Manager) Ping(ctx context.Context, profileID string) PingResult {
@@ -222,6 +225,7 @@ func (m *Manager) Ping(ctx context.Context, profileID string) PingResult {
 		m.metrics.mu.Unlock()
 		res.Error = sanitizeDBError(err)
 		res.ErrorCode = dbErrCode(err)
+		res.Category, res.Hint, res.NextSteps = connectionDiagnostic(err, p)
 		return res
 	}
 	res.OK = true

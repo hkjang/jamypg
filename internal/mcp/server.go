@@ -31,7 +31,7 @@ const ProtocolVersion = "2025-06-18"
 // the web UI (sidebar footer). It is a var so release builds can inject the
 // git tag via -ldflags "-X jamypg/internal/mcp.Version=<v>", keeping the
 // reported version in lockstep with the release instead of drifting.
-var Version = "0.36.0"
+var Version = "0.55.0"
 
 type Options struct {
 	Endpoint         string

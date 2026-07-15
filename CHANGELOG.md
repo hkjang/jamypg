@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.55.0 — 2026-07-15
+
+### Database connection UX and diagnostics
+
+- Added an engine-first DB connection wizard for PostgreSQL, MySQL, and
+  MariaDB. The selected engine is now persisted explicitly instead of falling
+  back to PostgreSQL.
+- Profile saves now run an immediate connection test and show actionable
+  diagnostics for DNS, network, authentication, database, TLS, secret-mount,
+  and server compatibility failures.
+- The DB screen now reports the drivers actually compiled into the binary;
+  MySQL/MariaDB use the bundled pure-Go `go-sql-driver/mysql` and require no
+  native client library in the runtime image.
+
+### DBA console
+
+- Redesigned the privileged DBA console around the operator workflow and added
+  detailed PostgreSQL/MySQL/MariaDB capability guides.
+- Improved profile context, status visibility, edit-from-list actions, safety
+  guidance, and responsive presentation.
+
 ## v0.2.0 — 2026-07-11
 
 ### Security and DBA controls
