@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.57.0 — 2026-07-15
+
+### OpenMetadata integration reliability
+
+- Added connection testing before configuration save with URL validation and
+  failure-stage diagnostics for authentication, DNS, network, timeout, and API
+  path errors.
+- Hardened table and glossary pagination against repeated cursors and exposed
+  partial-fetch warnings instead of silently treating incomplete imports as
+  successful.
+- Split imports into preview, review-queue, and direct-apply workflows, and
+  added lineage planning and publishing to the administration UI.
+
+### Work area UX
+
+- Natural-language queries can now select a DB profile and use its dedicated
+  catalog workspace, with the effective catalog source shown in the result.
+- History adds full-text filtering, activity summaries, prompt reuse, and SQL
+  handoff to the DB console.
+- Statistics now emphasize SQL validity rate, interpret quality signals, show
+  refresh state, and link directly to relevant follow-up actions.
+- Refreshed responsive layouts, guided empty states, example queries, and
+  in-product help across query, history, statistics, and OpenMetadata screens.
+
 ## v0.56.0 — 2026-07-15
 
 ### Profile catalog reliability and workflow

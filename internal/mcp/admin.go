@@ -92,6 +92,20 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		url, token, source := s.omConfig()
 		writeJSON(w, http.StatusOK, map[string]any{"url": url, "has_token": token != "", "source": source})
 	})
+	mux.HandleFunc("POST /api/openmetadata/test", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		var req struct {
+			URL   string `json:"url"`
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.omTestConfig(r.Context(), req.URL, req.Token))
+	})
 	mux.HandleFunc("PUT /api/openmetadata/config", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return

@@ -78,3 +78,18 @@ func TestOMConfigFilePermissions(t *testing.T) {
 		t.Fatalf("config file must be 0600, got %o", info.Mode().Perm())
 	}
 }
+
+func TestOMFailureStage(t *testing.T) {
+	tests := map[string]string{
+		"openmetadata GET: HTTP 401":        "authentication",
+		"dial tcp: connection refused":      "network",
+		"lookup openmetadata: no such host": "dns",
+		"context deadline exceeded":         "timeout",
+		"HTTP 404":                          "api-path",
+	}
+	for msg, want := range tests {
+		if got := omFailureStage(msg); got != want {
+			t.Errorf("omFailureStage(%q)=%q want %q", msg, got, want)
+		}
+	}
+}

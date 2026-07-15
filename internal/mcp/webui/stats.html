@@ -40,6 +40,8 @@
   .mini{font-size:12px;color:var(--sub);}
   canvas{width:100%;height:160px;display:block;}
   .empty{color:var(--sub);font-size:13px;padding:8px 0;}
+  .hero{background:linear-gradient(135deg,#10203c,#295a85);color:#fff;border:0;padding:20px}.hero h2{color:#fff;text-transform:none;font-size:20px;margin:0 0 4px}.hero p{margin:0;color:#cfdeed}.hero .btn{background:#fff;font-weight:700}.insight{border-left:4px solid var(--blue);padding:12px 14px;background:#f3f7fd;border-radius:0 9px 9px 0;margin-bottom:14px}.insight b{display:block;margin-bottom:2px}.fill.bad{background:var(--red)}.fill.green{background:var(--green)}.linkrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.linkbtn{color:var(--blue);text-decoration:none;background:#e8efff;padding:6px 10px;border-radius:7px;font-size:12px}
+  @media(max-width:700px){main{padding:12px}.hero .toolbar{align-items:flex-start;flex-direction:column}.bar-row .lab{width:110px}}
 </style>
 </head>
 <body>
@@ -51,6 +53,8 @@
   <label class="mini" id="allWrap" style="display:none;color:#cfe0ff"><input type="checkbox" id="allChk"> 전체 사용자 (admin)</label>
 </header>
 <main>
+  <div class="card hero"><div class="toolbar"><div><h2>사용 흐름과 품질 신호를 한눈에 확인하세요</h2><p>호출량뿐 아니라 SQL 유효율과 실행 상태를 확인하고 개선이 필요한 작업으로 바로 이동합니다.</p></div><span class="grow"></span><div><button class="btn" id="refreshBtn">새로고침</button><div class="mini" id="updatedAt" style="color:#cbdcf5;margin-top:4px"></div></div></div></div>
+  <div class="insight" id="insight"><b>데이터를 분석하고 있습니다</b><span class="mini">잠시만 기다려주세요.</span></div>
   <div class="kpis" id="kpis"></div>
 
   <div class="cols2">
@@ -80,6 +84,7 @@
     <div class="mini" style="margin-bottom:8px">같은 재질문이 반복되면 사전 보강 후보입니다 — 승격하면 재질문이 원천에서 사라집니다. <a href="/admin/editor?ds=metrics">지표사전 편집 →</a> · <a href="/admin/editor?ds=glossary">용어사전 편집 →</a></div>
     <div id="clarSug"><div class="empty">데이터 없음</div></div>
   </div>
+  <div class="card"><h2>다음 작업</h2><div class="linkrow"><a class="linkbtn" href="/admin/ask">새 질의 준비</a><a class="linkbtn" href="/admin/history">실패 이력 확인</a><a class="linkbtn" href="/admin/quality">메타 품질 점검</a><a class="linkbtn" href="/admin/editor">사전·지표 보강</a></div></div>
 </main>
 <script src="/admin/nav.js"></script>
 <script>
@@ -103,6 +108,7 @@ async function load() {
     drawTimeline(d.timeline || []);
     renderBars('#byTool', d.by_tool || {}, '도구 호출 없음');
     renderBars('#byStatus', d.by_exec_status || {}, '실행 기록 없음');
+    $('#updatedAt').textContent='갱신 '+new Date().toLocaleTimeString();renderInsight(d);
     if (d.per_user) {
       $('#byUserCard').style.display = '';
       const m = {}; (d.users || []).forEach(u => m[u.username || u.user_id] = u.count);
@@ -115,13 +121,17 @@ async function load() {
 }
 function kpi(n, l, s, cls){ return '<div class="kpi '+(cls||'')+'"><div class="n">'+n+'</div><div class="l">'+esc(l)+'</div>'+(s?'<div class="s">'+esc(s)+'</div>':'')+'</div>'; }
 function renderKPIs(d){
+  const validRate=d.generated?Math.round((d.generated_valid||0)/d.generated*100):0;
   $('#kpis').innerHTML =
     kpi(d.total||0, '총 MCP 호출') +
     kpi(d.prompts||0, '프롬프트', '사용자 질문', 'blue') +
-    kpi((d.generated_valid||0)+' / '+(d.generated||0), '생성 SQL (유효/전체)', '', 'amber') +
+    kpi(validRate+'%', 'SQL 유효율', (d.generated_valid||0)+' / '+(d.generated||0), validRate>=90?'green':'amber') +
     kpi(d.executions||0, '실행', '실제 DB 조회', 'green') +
     kpi((d.total_rows||0).toLocaleString(), '반환 행 합계');
 }
+function renderInsight(d){const rate=d.generated?Math.round((d.generated_valid||0)/d.generated*100):null;let title='아직 판단할 데이터가 충분하지 않습니다',msg='질의와 실행 활동이 쌓이면 개선 신호를 안내합니다.';
+  if(rate!==null){if(rate>=90){title='SQL 생성 품질이 안정적입니다';msg='유효율 '+rate+'%입니다. 실행 실패 상태가 있는지 함께 확인하세요.';}else{title='SQL 생성 품질 개선이 필요합니다';msg='유효율 '+rate+'%입니다. 내 이력의 invalid 생성과 재질문 학습 제안을 우선 확인하세요.';}}
+  $('#insight').innerHTML='<b>'+esc(title)+'</b><span class="mini">'+esc(msg)+'</span>';}
 function renderBars(sel, obj, emptyMsg){
   const entries = Object.entries(obj).sort((a,b)=>b[1]-a[1]);
   if (!entries.length){ $(sel).innerHTML = '<div class="empty">'+esc(emptyMsg)+'</div>'; return; }
@@ -158,6 +168,7 @@ function drawTimeline(tl){
 }
 
 $('#allChk').addEventListener('change', load);
+$('#refreshBtn').onclick=load;
 window.addEventListener('resize', () => { clearTimeout(window._rt); window._rt = setTimeout(load, 200); });
 
 async function loadClarSuggestions() {
