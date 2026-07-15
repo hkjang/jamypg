@@ -73,8 +73,8 @@ func (s *Server) registerAuthAPI(mux *http.ServeMux) {
 			return
 		}
 		if req.Role != nil {
-			if *req.Role != meta.RoleAdmin && *req.Role != meta.RoleUser {
-				writeAPIError(w, http.StatusBadRequest, errEmpty("role must be admin or user"))
+			if *req.Role != meta.RoleAdmin && *req.Role != meta.RoleUser && *req.Role != meta.RoleDBA {
+				writeAPIError(w, http.StatusBadRequest, errEmpty("role must be admin, dba, or user"))
 				return
 			}
 			// 마지막 admin 강등 방지

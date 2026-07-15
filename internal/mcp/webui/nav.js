@@ -26,6 +26,7 @@
       { key: 'editor',   href: '/admin/editor',  icon: '✏️', label: '테이블 편집', show: 'always' },
       { key: 'db',       href: '/admin/db',      icon: '🔌', label: 'DB · 쿼리',  show: 'always' },
       { key: 'dba',      href: '/admin/dba',     icon: '🩺', label: 'DBA 코파일럿', show: 'always' },
+      { key: 'dba-console', href: '/admin/dba-console', icon: '🛢', label: 'DBA 콘솔', show: 'dba' },
       { key: 'reviews',  href: '/admin/reviews', icon: '🧾', label: '메타 검토',  show: 'always' },
     ]},
     { title: '관리', items: [
@@ -54,6 +55,7 @@
     openmetadata: '## OpenMetadata 연동\n\n전사 카탈로그 OpenMetadata와 양방향 연동합니다.\n\n- **연결 설정**: URL/토큰을 저장(무재기동, `<data>/openmetadata.json`).\n- **Import**: 설명·PII·용어집을 **빈 필드에만** 후보로 가져오기(미리보기 → 반영).\n- **Export**: jamypg 설명을 OM의 빈 컬럼에 push.\n- **Drift**: 두 카탈로그의 불일치(gap/conflict) 대조.',
     profcat: '## 프로파일 카탈로그\n\n등록된 DB 프로파일마다 **독립 카탈로그 워크스페이스**(`<data>/profiles/<profile>/`)를 관리합니다.\n\n1. **라이브 DB로 구축/갱신** — 물리 모델을 워크스페이스에 수집(기존 설명 보존).\n2. **전체 구축** — 모든 프로파일 일괄 구축.\n3. 데이터셋 JSON을 조회·편집(검증·백업·롤백).\n4. **활성 카탈로그로 전환** — 무재기동 핫스왑(단독 모드).\n\n> 요청 단위로 `profile`을 지정하면 전역 전환 없이 그 워크스페이스로 질의·검증됩니다(멀티 DB).',
     dba: '## DBA 코파일럿\n\n연결된 DB와 감사 로그를 근거로 한 **읽기 전용 DBA 진단** 도구 모음입니다. 어떤 것도 자동으로 실행·변경하지 않으며, 결과는 검토용 권고입니다.\n\n- **헬스 점검** — 시스템 카탈로그를 읽어 PK 없는 테이블·미인덱스 FK·미사용 인덱스·오래된 통계·대형 테이블을 진단(엔진별 지원 범위 상이).\n- **인덱스 제안** — 감사 로그의 느린 쿼리에서 인덱스 없는 필터/조인/정렬 컬럼을 집계해 `CREATE INDEX` 후보를 영향도 순으로 제시(직접 검토 후 수행).\n- **워크로드** — 기간별 쿼리량·오류율·지연 분포·핫 테이블·피크 시간대 리포트.\n- **SQL 린트** — 단일 문장의 안티패턴(SELECT * , 선두 와일드카드 LIKE, 비-sargable 조건 등) 정적 진단.\n- **자연어 설명** — SQL이 무엇을 하는지 카탈로그 논리명으로 한국어 요약.\n\n> 상단에서 DB 프로파일을 선택하세요. 인덱스/워크로드는 프로파일을 비우면 전체 로그를 대상으로 합니다.',
+    'dba-console': '## DBA 콘솔 (dba/admin 전용)\n\n권한 있는(쓰기 가능) DBA 세션으로 실제 DB를 관리합니다. 읽기 전용 쿼리 계정과 **분리된 커넥션**을 사용하며, 모든 변경은 감사 로그(`dba:*`)에 기록됩니다.\n\n### 사전 준비 — 프로파일에 DBA 자격증명\n**DB · 쿼리** 화면에서 프로파일을 편집해 DBA 블록을 설정해야 콘솔이 동작합니다:\n- `dba.enabled` = true\n- `dba.username` / `dba.password_ref` — 권한 있는 계정(예: postgres superuser 또는 CREATEROLE/CREATEDB 보유 롤). `password_ref`는 `env:이름` 또는 `file:경로` 권장\n- `dba.connect_string`(선택) — postgres에서 `CREATE/DROP DATABASE`를 사용자 DB 안에서 실행하지 않도록 `postgres` 관리 DB로 지정\n\n### 탭\n- **개요** — 방언·서버 버전·역할/DB 수\n- **사용자·역할** — 생성/속성·비밀번호 변경/삭제 (postgres LOGIN·SUPERUSER·CREATEDB·CREATEROLE)\n- **데이터베이스** — 생성/삭제(소유자·인코딩)\n- **권한** — GRANT/REVOKE (`WITH GRANT OPTION`)\n- **설정** — 조회 및 변경(postgres `ALTER SYSTEM`+reload, mysql `SET GLOBAL/SESSION`)\n- **세션** — 활성 세션 조회, 쿼리 취소/세션 종료\n- **유지보수** — VACUUM/ANALYZE/REINDEX (mysql ANALYZE/OPTIMIZE)\n- **SQL 콘솔** — 구조화 도구로 안 되는 작업을 위한 임의 권한 SQL 실행(확인 체크 필요, 원문 감사)\n\n> 삭제(사용자/DB)와 SQL 콘솔은 되돌릴 수 없습니다. 최소 권한 원칙에 따라 DBA 계정 권한을 필요한 만큼만 부여하세요.',
     stats: '## 통계\n\nMCP 도구 호출량·지연·오류율과 최근 추이를 봅니다. Prometheus 지표는 `/metrics`에서 제공됩니다.',
     history: '## 내 이력\n\n내가 실행한 질의·도구 호출 이력을 조회합니다(관리자는 전체/사용자 필터).',
     users: '## 사용자 (관리자)\n\n로컬 계정·역할을 관리합니다. admin 역할이 전체 관리 권한을 가집니다.',
@@ -205,9 +207,13 @@
 
   function buildSidebar(me) {
     var authed = !!(me && me.auth_enabled);
-    var admin = authed && me.authenticated && me.user && me.user.role === 'admin';
+    var role = (authed && me.authenticated && me.user && me.user.role) || '';
+    var admin = role === 'admin';
+    var dba = admin || role === 'dba';
     var cur = window.JASQL.page;
     var show = function (rule) {
+      // standalone (auth disabled) is locally trusted → show dba/admin items too
+      if (rule === 'dba') return dba || !authed;
       return rule === 'always' || (rule === 'auth' && authed) || (rule === 'admin' && admin);
     };
 

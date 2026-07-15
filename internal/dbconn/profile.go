@@ -32,6 +32,10 @@ type Profile struct {
 	Pool          Pool    `json:"pool,omitempty"`
 	Policy        Policy  `json:"policy,omitempty"`
 	Routing       Routing `json:"routing,omitempty"`
+	// DBA is the opt-in privileged-credentials block enabling DBA operations
+	// (user/role/database/settings/session management) on this profile via a
+	// separate write-capable pool. Nil/disabled → DBA tools refuse the profile.
+	DBA *DBAConfig `json:"dba,omitempty"`
 }
 
 // Routing carries the operator's profile-selection metadata used by
@@ -189,6 +193,19 @@ func (p *Profile) Validate() error {
 	}
 	if p.Policy.MaxRows > 0 && p.Policy.DefaultMaxRows > p.Policy.MaxRows {
 		return errors.New("default_max_rows must not exceed max_rows")
+	}
+	// DBA block: when present and enabled, require privileged credentials with
+	// a valid password_ref scheme (same rules as the query account).
+	if p.DBA != nil && (p.DBA.Enabled || p.DBA.Username != "" || p.DBA.PasswordRef != "") {
+		if strings.TrimSpace(p.DBA.Username) == "" {
+			return errors.New("dba.username is required when dba is configured")
+		}
+		if strings.TrimSpace(p.DBA.PasswordRef) == "" {
+			return errors.New("dba.password_ref is required when dba is configured (env:NAME, file:PATH, or plain:VALUE)")
+		}
+		if _, err := parsePasswordRef(p.DBA.PasswordRef); err != nil {
+			return fmt.Errorf("dba.%w", err)
+		}
 	}
 	return nil
 }
@@ -374,7 +391,7 @@ func RemoveProfile(dataDir, id string) ([]Profile, error) {
 
 // Masked returns an API-safe copy (password_ref masked when plain).
 func (p Profile) Masked() map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"id":             p.ID,
 		"name":           p.Name,
 		"type":           p.Type,
@@ -385,6 +402,16 @@ func (p Profile) Masked() map[string]any {
 		"pool":           p.Pool,
 		"policy":         p.Policy,
 	}
+	if p.DBA != nil {
+		// expose DBA config for the console, but never the raw secret
+		m["dba"] = map[string]any{
+			"enabled":        p.DBA.Enabled,
+			"username":       p.DBA.Username,
+			"password_ref":   MaskedRef(p.DBA.PasswordRef),
+			"connect_string": p.DBA.ConnectString,
+		}
+	}
+	return m
 }
 
 func durationSeconds(s int) time.Duration { return time.Duration(s) * time.Second }

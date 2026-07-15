@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jamypg DBA 콘솔</title>
+<style>
+  :root{
+    --bg:#f5f7fa;--card:#fff;--ink:#1c2430;--sub:#5b6b7f;--line:#dde4ec;
+    --blue:#2563eb;--green:#15803d;--amber:#b45309;--red:#b91c1c;
+    --mono:ui-monospace,'Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,'Malgun Gothic','Noto Sans KR',sans-serif;}
+  header{background:#2a1230;color:#f4e8ef;padding:12px 20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;position:sticky;top:0;z-index:20;}
+  header h1{font-size:16px;margin:0 10px 0 0;}
+  .grow{flex:1;}
+  header input#adminToken{background:#3a1c42;border:1px solid #5f3268;color:#f4e8ef;border-radius:6px;padding:6px 10px;width:150px;}
+  header select#profile{background:#3a1c42;border:1px solid #5f3268;color:#f4e8ef;border-radius:6px;padding:6px 10px;min-width:170px;}
+  main{max-width:1300px;margin:0 auto;padding:16px 20px 90px;}
+  .warn-banner{background:#fdf2f2;border:1px solid #f5c2c2;color:#8a1c1c;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;}
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;font-weight:600;color:var(--sub);}
+  .tab.active{background:#7a2f88;border-color:#7a2f88;color:#fff;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--sub);font-weight:600;letter-spacing:.3px;text-transform:uppercase;}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px;}
+  .kpi{border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .kpi .n{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;word-break:break-all;}
+  .kpi .l{font-size:12px;color:var(--sub);margin-top:2px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--sub);}
+  td.mono,code{font-family:var(--mono);font-size:12px;}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer;}
+  .btn:hover{border-color:#7a2f88;color:#7a2f88;}
+  .btn.primary{background:#7a2f88;border-color:#7a2f88;color:#fff;}
+  .btn.danger{background:var(--red);border-color:var(--red);color:#fff;}
+  .btn.mini{padding:3px 9px;font-size:11.5px;}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+  label.f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--sub);}
+  input[type=text],input[type=password],input[type=number],select.in{border:1px solid var(--line);border-radius:7px;padding:7px 9px;font-size:13px;min-width:120px;}
+  textarea{width:100%;min-height:120px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:12.5px;resize:vertical;}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end;}
+  .mini{font-size:12px;color:var(--sub);}
+  .chk{display:flex;gap:5px;align-items:center;font-size:12.5px;color:var(--ink);}
+  .msg{font-size:12.5px;margin-left:6px;} .msg.ok{color:var(--green);} .msg.bad{color:var(--red);}
+  .pane{display:none;} .pane.active{display:block;}
+  .out{margin-top:10px;font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;background:#faf7fb;border:1px solid var(--line);border-radius:8px;padding:10px;display:none;}
+  .out.show{display:block;}
+  .out.err{background:#fdf2f2;border-color:#f5c2c2;color:#8a1c1c;}
+  .disabled-note{color:var(--amber);font-size:13px;padding:8px 0;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛢 DBA 콘솔</h1>
+  <span class="mini" id="scope" style="color:#d9b9df"></span>
+  <span class="grow"></span>
+  <select id="profile" title="DB 프로파일"></select>
+  <input id="adminToken" type="password" placeholder="관리 토큰">
+  <span class="msg" id="msg"></span>
+</header>
+<main>
+  <div class="warn-banner">⚠ 이 콘솔은 <b>권한 있는(쓰기 가능) DBA 세션</b>으로 실제 DB를 변경합니다. 모든 변경은 감사 로그에 기록됩니다. 프로파일에 DBA 자격증명(<code>db_profiles.dba</code>)이 설정된 경우에만 동작합니다.</div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-p="overview">개요</button>
+    <button class="tab" data-p="users">사용자·역할</button>
+    <button class="tab" data-p="databases">데이터베이스</button>
+    <button class="tab" data-p="grants">권한</button>
+    <button class="tab" data-p="settings">설정</button>
+    <button class="tab" data-p="sessions">세션</button>
+    <button class="tab" data-p="maint">유지보수</button>
+    <button class="tab" data-p="sql">SQL 콘솔</button>
+  </div>
+
+  <!-- 개요 -->
+  <section class="pane active" id="pane-overview">
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">개요</h2><span class="grow"></span><button class="btn" id="ovRefresh">새로고침</button></div>
+      <div id="ovOut"></div>
+    </div>
+  </section>
+
+  <!-- 사용자 -->
+  <section class="pane" id="pane-users">
+    <div class="card">
+      <h2>사용자/역할 생성</h2>
+      <div class="grid2">
+        <label class="f">사용자명<input type="text" id="uName" placeholder="app_user"></label>
+        <label class="f">비밀번호<input type="password" id="uPass" placeholder="(선택)"></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px">
+        <span class="chk"><input type="checkbox" id="uLogin" checked>LOGIN</span>
+        <span class="chk"><input type="checkbox" id="uSuper">SUPERUSER</span>
+        <span class="chk"><input type="checkbox" id="uCreateDB">CREATEDB</span>
+        <span class="chk"><input type="checkbox" id="uCreateRole">CREATEROLE</span>
+        <span class="grow"></span>
+        <button class="btn" id="uAlter">비밀번호/속성 변경</button>
+        <button class="btn primary" id="uCreate">생성</button>
+      </div>
+      <div class="out" id="uOut"></div>
+    </div>
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">사용자/역할 목록</h2><span class="grow"></span><button class="btn" id="uList">불러오기</button></div>
+      <div id="uTable"></div>
+    </div>
+  </section>
+
+  <!-- 데이터베이스 -->
+  <section class="pane" id="pane-databases">
+    <div class="card">
+      <h2>데이터베이스 생성</h2>
+      <div class="grid2">
+        <label class="f">이름<input type="text" id="dbName" placeholder="analytics"></label>
+        <label class="f">소유자(postgres)<input type="text" id="dbOwner" placeholder="(선택)"></label>
+        <label class="f">인코딩/charset<input type="text" id="dbEnc" placeholder="UTF8 (선택)"></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><span class="grow"></span><button class="btn primary" id="dbCreate">생성</button></div>
+      <div class="out" id="dbOut"></div>
+    </div>
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">데이터베이스 목록</h2><span class="grow"></span><button class="btn" id="dbList">불러오기</button></div>
+      <div id="dbTable"></div>
+    </div>
+  </section>
+
+  <!-- 권한 -->
+  <section class="pane" id="pane-grants">
+    <div class="card">
+      <h2>권한 부여 / 회수</h2>
+      <div class="grid2">
+        <label class="f">권한<input type="text" id="gPriv" placeholder="SELECT, INSERT 또는 ALL PRIVILEGES"></label>
+        <label class="f">대상(ON)<input type="text" id="gObj" placeholder="DATABASE mydb / public.mytable / mydb.*"></label>
+        <label class="f">대상 사용자<input type="text" id="gTo" placeholder="app_user"></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px">
+        <span class="chk"><input type="checkbox" id="gWith">WITH GRANT OPTION</span>
+        <span class="grow"></span>
+        <button class="btn danger" id="gRevoke">회수(REVOKE)</button>
+        <button class="btn primary" id="gGrant">부여(GRANT)</button>
+      </div>
+      <div class="out" id="gOut"></div>
+    </div>
+  </section>
+
+  <!-- 설정 -->
+  <section class="pane" id="pane-settings">
+    <div class="card">
+      <h2>파라미터 변경</h2>
+      <div class="grid2">
+        <label class="f">파라미터<input type="text" id="pName" placeholder="work_mem"></label>
+        <label class="f">값<input type="text" id="pVal" placeholder="256MB"></label>
+        <label class="f">범위(mysql)<select class="in" id="pScope"><option>GLOBAL</option><option>SESSION</option></select></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><span class="grow"></span><button class="btn primary" id="pSet">적용</button></div>
+      <div class="out" id="pOut"></div>
+    </div>
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">설정 조회</h2>
+        <input type="text" id="sFilter" placeholder="이름 필터 (예: mem)" style="min-width:200px">
+        <span class="grow"></span><button class="btn" id="sList">조회</button></div>
+      <div id="sTable"></div>
+    </div>
+  </section>
+
+  <!-- 세션 -->
+  <section class="pane" id="pane-sessions">
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">활성 세션</h2><span class="grow"></span><button class="btn" id="seList">불러오기</button></div>
+      <div id="seTable"></div>
+      <div class="out" id="seOut"></div>
+    </div>
+  </section>
+
+  <!-- 유지보수 -->
+  <section class="pane" id="pane-maint">
+    <div class="card">
+      <h2>유지보수 실행</h2>
+      <div class="grid2">
+        <label class="f">작업<select class="in" id="mOp"><option>VACUUM</option><option>ANALYZE</option><option>REINDEX</option><option>OPTIMIZE</option></select></label>
+        <label class="f">대상<input type="text" id="mTarget" placeholder="public.mytable / index / database"></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><span class="grow"></span><button class="btn primary" id="mRun">실행</button></div>
+      <div class="out" id="mOut"></div>
+      <div class="mini" style="margin-top:8px">postgres: VACUUM/ANALYZE/REINDEX · mysql/mariadb: ANALYZE/OPTIMIZE (대상 테이블 필요)</div>
+    </div>
+  </section>
+
+  <!-- SQL 콘솔 -->
+  <section class="pane" id="pane-sql">
+    <div class="card">
+      <h2>권한 SQL 콘솔 (에스케이프 해치)</h2>
+      <div class="mini" style="margin-bottom:8px">구조화된 도구가 없는 DBA 작업을 직접 실행합니다. <b>단일 문장</b>만, 실행 시 감사 로그에 원문이 기록됩니다.</div>
+      <textarea id="xSql" placeholder="예: ALTER ROLE app_user CONNECTION LIMIT 20;"></textarea>
+      <div class="toolbar" style="margin-top:10px">
+        <span class="chk"><input type="checkbox" id="xConfirm">실행을 확인합니다(confirm)</span>
+        <span class="grow"></span>
+        <button class="btn danger" id="xRun">실행</button>
+      </div>
+      <div class="out" id="xOut"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/admin/nav.js"></script>
+<script>
+'use strict';
+var $=function(id){return document.getElementById(id);};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+function headers(){var h={'Content-Type':'application/json'};var t=$('adminToken');if(t&&t.value)h['X-Admin-Token']=t.value;return h;}
+function flash(ok,t){var m=$('msg');m.className='msg '+(ok?'ok':'bad');m.textContent=t;setTimeout(function(){m.textContent='';},3200);}
+function prof(){return $('profile').value||'';}
+function api(path,body){return fetch(path,{method:'POST',headers:headers(),body:JSON.stringify(Object.assign({profile:prof()},body||{}))}).then(function(r){return r.json();});}
+function showOut(el,d){el.className='out show'+(d.status==='error'?' err':'');el.textContent=(d.status==='error'?('✘ '+d.error):('✓ '+(d.executed_sql?d.executed_sql:JSON.stringify(d,null,2))+(d.rows_affected!=null?('\n영향 행: '+d.rows_affected):'')));}
+function need(){ if(!prof()){flash(false,'프로파일을 선택하세요');return false;} return true; }
+function tbl(rows){
+  if(!rows||!rows.length) return '<div class="mini">데이터 없음</div>';
+  var cols=Object.keys(rows[0]);
+  return '<div style="overflow-x:auto"><table><thead><tr>'+cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join('')+'</tr></thead><tbody>'+
+    rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td class="mono">'+esc(r[c])+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table></div>';
+}
+
+/* 개요 */
+function loadOverview(){
+  if(!need())return; var el=$('ovOut');el.innerHTML='<div class="mini">불러오는 중…</div>';
+  api('/api/dba/overview').then(function(d){
+    if(d.status==='error'){el.innerHTML='<div class="disabled-note">✘ '+esc(d.error)+'</div>';return;}
+    if(!d.dba_enabled){el.innerHTML='<div class="disabled-note">이 프로파일에 DBA 자격증명이 없습니다. db_profiles의 <code>dba.enabled</code> + <code>dba.username</code> + <code>dba.password_ref</code>를 설정하세요(DB·쿼리 화면의 프로파일 편집).</div>';return;}
+    el.innerHTML='<div class="kpis">'+
+      '<div class="kpi"><div class="n">'+esc(d.dialect)+'</div><div class="l">방언</div></div>'+
+      '<div class="kpi"><div class="n">'+esc(d.role_count!=null?d.role_count:'-')+'</div><div class="l">역할/사용자</div></div>'+
+      '<div class="kpi"><div class="n">'+esc(d.database_count!=null?d.database_count:'-')+'</div><div class="l">데이터베이스</div></div>'+
+      '<div class="kpi" style="grid-column:1/-1"><div class="n" style="font-size:13px">'+esc(d.version||'')+'</div><div class="l">서버 버전</div></div></div>';
+  }).catch(function(e){el.innerHTML='<div class="disabled-note">✘ '+esc(e.message)+'</div>';});
+}
+
+/* 사용자 */
+function userOpts(){return {username:$('uName').value.trim(),password:$('uPass').value,can_login:$('uLogin').checked,superuser:$('uSuper').checked,createdb:$('uCreateDB').checked,createrole:$('uCreateRole').checked};}
+$('uCreate').onclick=function(){if(!need())return;if(!$('uName').value.trim()){flash(false,'사용자명을 입력하세요');return;}
+  api('/api/dba/create-user',userOpts()).then(function(d){showOut($('uOut'),d);if(d.status==='ok'){flash(true,'생성됨');loadUsers();}});};
+$('uAlter').onclick=function(){if(!need())return;if(!$('uName').value.trim()){flash(false,'사용자명을 입력하세요');return;}
+  api('/api/dba/alter-user',userOpts()).then(function(d){showOut($('uOut'),d);if(d.status==='ok')flash(true,'변경됨');});};
+function loadUsers(){if(!need())return;$('uTable').innerHTML='<div class="mini">불러오는 중…</div>';
+  api('/api/dba/users').then(function(d){
+    if(d.status==='error'){$('uTable').innerHTML='<div class="disabled-note">✘ '+esc(d.error)+'</div>';return;}
+    var rows=(d.users||[]).map(function(u){return u;});
+    var extra=rows.map(function(u){var name=u.name;return '<tr><td class="mono"><b>'+esc(name)+'</b></td><td>'+
+      Object.keys(u).filter(function(k){return k!=='name';}).map(function(k){return esc(k)+'='+esc(u[k]);}).join(' · ')+
+      '</td><td><button class="btn mini" onclick="fillUser(\''+esc(name).replace(/'/g,"\\'")+'\')">편집</button> '+
+      '<button class="btn mini" onclick="dropUser(\''+esc(name).replace(/'/g,"\\'")+'\')">삭제</button></td></tr>';}).join('');
+    $('uTable').innerHTML=rows.length?('<div style="overflow-x:auto"><table><thead><tr><th>이름</th><th>속성</th><th></th></tr></thead><tbody>'+extra+'</tbody></table></div>'):'<div class="mini">없음</div>';
+  });}
+function fillUser(n){$('uName').value=n;document.querySelector('.tab[data-p=users]').click();$('uName').scrollIntoView();}
+function dropUser(n){if(!confirm('['+n+'] 사용자/역할을 삭제합니다. 계속할까요?'))return;
+  api('/api/dba/drop-user',{username:n,confirm:true}).then(function(d){showOut($('uOut'),d);if(d.status==='ok'){flash(true,'삭제됨');loadUsers();}});}
+
+/* 데이터베이스 */
+$('dbCreate').onclick=function(){if(!need())return;if(!$('dbName').value.trim()){flash(false,'이름을 입력하세요');return;}
+  api('/api/dba/create-database',{name:$('dbName').value.trim(),owner:$('dbOwner').value.trim(),encoding:$('dbEnc').value.trim()}).then(function(d){showOut($('dbOut'),d);if(d.status==='ok'){flash(true,'생성됨');loadDatabases();}});};
+function loadDatabases(){if(!need())return;$('dbTable').innerHTML='<div class="mini">불러오는 중…</div>';
+  api('/api/dba/databases').then(function(d){
+    if(d.status==='error'){$('dbTable').innerHTML='<div class="disabled-note">✘ '+esc(d.error)+'</div>';return;}
+    var rows=(d.databases||[]).map(function(x){return '<tr>'+Object.keys(x).map(function(k){return '<td class="mono">'+esc(x[k])+'</td>';}).join('')+
+      '<td><button class="btn mini" onclick="dropDatabase(\''+esc(x.name).replace(/'/g,"\\'")+'\')">삭제</button></td></tr>';}).join('');
+    var head=(d.databases&&d.databases.length)?('<thead><tr>'+Object.keys(d.databases[0]).map(function(k){return '<th>'+esc(k)+'</th>';}).join('')+'<th></th></tr></thead>'):'';
+    $('dbTable').innerHTML=(d.databases&&d.databases.length)?('<div style="overflow-x:auto"><table>'+head+'<tbody>'+rows+'</tbody></table></div>'):'<div class="mini">없음</div>';
+  });}
+function dropDatabase(n){if(!confirm('['+n+'] 데이터베이스를 삭제합니다. 되돌릴 수 없습니다. 계속할까요?'))return;
+  api('/api/dba/drop-database',{name:n,confirm:true}).then(function(d){showOut($('dbOut'),d);if(d.status==='ok'){flash(true,'삭제됨');loadDatabases();}});}
+
+/* 권한 */
+$('gGrant').onclick=function(){if(!need())return;
+  api('/api/dba/grant',{privileges:$('gPriv').value,object:$('gObj').value,grantee:$('gTo').value,with_grant:$('gWith').checked,revoke:false}).then(function(d){showOut($('gOut'),d);if(d.status==='ok')flash(true,'부여됨');});};
+$('gRevoke').onclick=function(){if(!need())return;
+  api('/api/dba/grant',{privileges:$('gPriv').value,object:$('gObj').value,grantee:$('gTo').value,revoke:true}).then(function(d){showOut($('gOut'),d);if(d.status==='ok')flash(true,'회수됨');});};
+
+/* 설정 */
+$('pSet').onclick=function(){if(!need())return;if(!$('pName').value.trim()){flash(false,'파라미터명을 입력하세요');return;}
+  api('/api/dba/set-parameter',{parameter:$('pName').value.trim(),value:$('pVal').value,scope:$('pScope').value}).then(function(d){showOut($('pOut'),d);if(d.status==='ok')flash(true,'적용됨');});};
+function loadSettings(){if(!need())return;$('sTable').innerHTML='<div class="mini">불러오는 중…</div>';
+  api('/api/dba/settings',{filter:$('sFilter').value.trim()}).then(function(d){
+    if(d.status==='error'){$('sTable').innerHTML='<div class="disabled-note">✘ '+esc(d.error)+'</div>';return;}
+    $('sTable').innerHTML=tbl(d.settings);});}
+
+/* 세션 */
+function loadSessions(){if(!need())return;$('seTable').innerHTML='<div class="mini">불러오는 중…</div>';
+  api('/api/dba/sessions').then(function(d){
+    if(d.status==='error'){$('seTable').innerHTML='<div class="disabled-note">✘ '+esc(d.error)+'</div>';return;}
+    var rows=(d.sessions||[]);
+    if(!rows.length){$('seTable').innerHTML='<div class="mini">활성 세션 없음</div>';return;}
+    var cols=Object.keys(rows[0]);
+    $('seTable').innerHTML='<div style="overflow-x:auto"><table><thead><tr>'+cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join('')+'<th></th></tr></thead><tbody>'+
+      rows.map(function(r){var pid=r.pid;return '<tr>'+cols.map(function(c){return '<td class="mono">'+esc(r[c])+'</td>';}).join('')+
+        '<td style="white-space:nowrap"><button class="btn mini" onclick="killSession('+pid+',true)">취소</button> <button class="btn mini" onclick="killSession('+pid+',false)">종료</button></td></tr>';}).join('')+'</tbody></table></div>';
+  });}
+function killSession(pid,cancelOnly){if(!confirm('pid '+pid+' 세션을 '+(cancelOnly?'쿼리 취소':'강제 종료')+'합니다. 계속할까요?'))return;
+  api('/api/dba/terminate-session',{pid:pid,cancel_only:cancelOnly}).then(function(d){showOut($('seOut'),d);if(d.status==='ok'){flash(true,'완료');loadSessions();}});}
+
+/* 유지보수 */
+$('mRun').onclick=function(){if(!need())return;
+  api('/api/dba/maintenance',{operation:$('mOp').value,target:$('mTarget').value.trim()}).then(function(d){showOut($('mOut'),d);if(d.status==='ok')flash(true,'완료');});};
+
+/* SQL 콘솔 */
+$('xRun').onclick=function(){if(!need())return;if(!$('xConfirm').checked){flash(false,'confirm 체크가 필요합니다');return;}
+  if(!$('xSql').value.trim()){flash(false,'SQL을 입력하세요');return;}
+  api('/api/dba/execute',{sql:$('xSql').value.trim(),confirm:true}).then(function(d){showOut($('xOut'),d);if(d.status==='ok')flash(true,'실행됨');});};
+
+/* tabs + init */
+$('tabs').addEventListener('click',function(e){var b=e.target.closest('.tab');if(!b)return;
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
+  document.querySelectorAll('.pane').forEach(function(p){p.classList.remove('active');});
+  b.classList.add('active');$('pane-'+b.dataset.p).classList.add('active');});
+$('ovRefresh').onclick=loadOverview;$('uList').onclick=loadUsers;$('dbList').onclick=loadDatabases;
+$('sList').onclick=loadSettings;$('seList').onclick=loadSessions;
+function loadProfiles(){return fetch('/api/db-profiles',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+  var ps=d.profiles||[];var last=localStorage.getItem('jasqlLastProfile');
+  $('profile').innerHTML=(ps.length?ps.map(function(p){return '<option value="'+esc(p.id)+'"'+(p.id===last?' selected':'')+'>'+esc(p.id)+(p.name?' — '+esc(p.name):'')+'</option>';}).join(''):'<option value="">프로파일 없음</option>');
+  $('profile').onchange=function(){localStorage.setItem('jasqlLastProfile',$('profile').value);loadOverview();};
+}).catch(function(){});}
+JASQL.mount({page:'dba-console',onReady:function(me){if(me&&me.version)$('scope').textContent='v'+me.version;loadProfiles().then(loadOverview);}});
+</script>
+</body>
+</html>

@@ -52,7 +52,7 @@
         <input id="c_password" type="password" placeholder="비밀번호 (8자+)" required minlength="8">
         <input id="c_display" placeholder="표시 이름">
         <input id="c_email" type="email" placeholder="이메일">
-        <select id="c_role"><option value="user">user</option><option value="admin">admin</option></select>
+        <select id="c_role"><option value="user">user</option><option value="dba">dba</option><option value="admin">admin</option></select>
         <button class="btn primary" type="submit">＋ 추가</button>
       </div>
     </form>
@@ -106,7 +106,9 @@ async function refresh() {
       '<td>' + (u.is_active ? '<span class="b on">활성</span>' : '<span class="b off">비활성</span>') + '</td>' +
       '<td class="mini">' + esc(u.last_login_at ? u.last_login_at.slice(0, 19).replace('T', ' ') : '—') + '</td>' +
       '<td>' +
-        '<button class="btn" onclick="setRole(\'' + u.id + '\', \'' + (u.role === 'admin' ? 'user' : 'admin') + '\')">' + (u.role === 'admin' ? 'user로' : 'admin으로') + '</button> ' +
+        '<select class="btn" onchange="setRole(\'' + u.id + '\', this.value)">' +
+          ['user','dba','admin'].map(function(r){return '<option value="'+r+'"'+(u.role===r?' selected':'')+'>'+r+'</option>';}).join('') +
+        '</select> ' +
         '<button class="btn" onclick="setActive(\'' + u.id + '\', ' + !u.is_active + ')">' + (u.is_active ? '비활성화' : '활성화') + '</button> ' +
         (u.provider === 'local' ? '<button class="btn" onclick="resetPw(\'' + u.id + '\', \'' + esc(u.username) + '\')">PW 재설정</button>' : '') +
       '</td></tr>').join('');

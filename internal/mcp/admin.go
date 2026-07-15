@@ -562,6 +562,31 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// requireDBA gates the REST DBA console: meta mode needs the dba (or admin)
+// role; standalone falls back to the master-token gate exactly like admin.
+func (s *Server) requireDBA(w http.ResponseWriter, r *http.Request) bool {
+	if s.authEnabled() {
+		u, err := s.authenticate(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error": "authentication required",
+				"hint":  "로그인 세션, MCP 키, 또는 X-Admin-Token이 필요합니다.",
+			})
+			return false
+		}
+		if !u.IsDBA() {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "dba or admin role required",
+				"hint":  "DBA 콘솔은 dba/admin 역할 전용입니다. 관리자에게 역할 승격을 요청하세요.",
+			})
+			return false
+		}
+		return true
+	}
+	// standalone: same master-token gate as admin
+	return s.requireAdmin(w, r)
+}
+
 // adminAudit records REST mutations into the same audit JSONL as MCP calls.
 func (s *Server) adminAudit(r *http.Request, action, detail string, callErr error) {
 	entry := map[string]any{

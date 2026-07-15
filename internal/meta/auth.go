@@ -55,7 +55,7 @@ func (s *Service) CreateLocalUser(ctx context.Context, username, password, role,
 	if username == "" {
 		return nil, errors.New("username is required")
 	}
-	if role != RoleAdmin && role != RoleUser {
+	if role != RoleAdmin && role != RoleUser && role != RoleDBA {
 		role = RoleUser
 	}
 	hash, err := HashPassword(password)

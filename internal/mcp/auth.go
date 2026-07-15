@@ -78,6 +78,22 @@ func (s *Server) toolActorIsAdmin(ctx context.Context) bool {
 	return true // stdio / no token configured
 }
 
+// toolActorIsDBA decides whether the MCP caller may run privileged DBA tools.
+// Meta mode → dba or admin role. Standalone → the same master-token flag as
+// admin (locally trusted when no token is configured). DBA mutation is strictly
+// more dangerous than catalog admin, so callers ALSO require the profile to opt
+// in via DBAConfig (checked at the exec layer).
+func (s *Server) toolActorIsDBA(ctx context.Context) bool {
+	if s.authEnabled() {
+		u := userFrom(ctx)
+		return u != nil && u.IsDBA()
+	}
+	if v, ok := ctx.Value(ctxKeyHTTPAdmin{}).(bool); ok {
+		return v
+	}
+	return true // stdio / no token configured
+}
+
 // newMasterUser returns a fresh synthetic identity for the -admin-token
 // break-glass. A new copy per request avoids sharing a mutable pointer across
 // concurrent requests.

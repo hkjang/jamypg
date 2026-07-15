@@ -116,6 +116,13 @@
             </div>
             <label>추가 차단 키워드 (콤마 구분, 기본 차단 목록에 추가됨)</label>
             <input id="f_denied" placeholder="예: DBLINK, EXTERNAL">
+            <label style="margin-top:6px">🛢 DBA 자격증명 (선택 — DBA 콘솔/도구 활성화용, 쓰기 가능 계정)</label>
+            <div class="grid">
+              <label class="chk" style="grid-column:1/-1"><input type="checkbox" id="f_dba_enabled"> DBA 작업 활성화 (dba.enabled)</label>
+              <input id="f_dba_user" placeholder="DBA 계정 (예: postgres)">
+              <input id="f_dba_pw" placeholder="env:PG_SUPER_PW (권장) / file:… / plain:…">
+              <input id="f_dba_conn" placeholder="DBA 접속문자열(선택, 예: host:5432/postgres)">
+            </div>
             <label id="visLabel" style="display:none">공개 범위 (인증 모드)</label>
             <select id="f_visibility" style="display:none">
               <option value="private">private — 소유자와 grant받은 사용자만</option>
@@ -312,6 +319,11 @@ function openForm(id) {
   $('#f_defrows').value = p.policy.default_max_rows || '';
   $('#f_maxrows').value = p.policy.max_rows || '';
   $('#f_denied').value = (p.policy.denied_keywords || []).join(', ');
+  const dba = p.dba || {};
+  $('#f_dba_enabled').checked = !!dba.enabled;
+  $('#f_dba_user').value = dba.username || '';
+  $('#f_dba_pw').value = id ? (dba.password_ref && !dba.password_ref.startsWith('plain:') ? dba.password_ref : '') : '';
+  $('#f_dba_conn').value = dba.connect_string || '';
   if (window.AUTH) {
     $('#visLabel').style.display = ''; $('#f_visibility').style.display = '';
     $('#f_visibility').value = p.visibility || 'private';
@@ -333,6 +345,17 @@ async function saveProfile(ev) {
               denied_keywords: $('#f_denied').value.split(',').map(s => s.trim()).filter(Boolean) }
   };
   if (window.AUTH) body.visibility = $('#f_visibility').value;
+  // DBA credentials (optional)
+  const dbaUser = $('#f_dba_user').value.trim();
+  let dbaPw = $('#f_dba_pw').value.trim();
+  if ($('#f_dba_enabled').checked || dbaUser || dbaPw) {
+    if (EDIT_ID && !dbaPw) {
+      const cur = PROFILES.find(x => x.id === EDIT_ID);
+      if (cur && cur.dba && cur.dba.password_ref && !cur.dba.password_ref.startsWith('plain:')) dbaPw = cur.dba.password_ref;
+    }
+    body.dba = { enabled: $('#f_dba_enabled').checked, username: dbaUser,
+      password_ref: dbaPw, connect_string: $('#f_dba_conn').value.trim() };
+  }
   if (EDIT_ID && !body.password_ref) {
     const cur = PROFILES.find(x => x.id === EDIT_ID);
     if (cur && !cur.password_ref.startsWith('plain:')) body.password_ref = cur.password_ref;

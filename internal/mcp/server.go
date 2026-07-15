@@ -154,6 +154,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerAuthAPI(mux)
 	s.registerAdmin(mux)
 	s.registerDBAPI(mux)
+	s.registerDBAConsole(mux)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -485,6 +486,85 @@ func (s *Server) tools() []map[string]any {
 			"days":    integer("How many days of audit log to summarize (default 7)"),
 			"slow_ms": integer("Slow-query threshold in ms (default 200)"),
 		}, nil)),
+		tool("dba_overview", "DBA console overview for a profile: dialect, whether DBA credentials are configured, server version, and role/database counts. Read-only. Requires the dba/admin role and a DBA-enabled profile (db_profiles.dba).", objectSchema(map[string]any{
+			"profile": str("DB profile id (must have dba credentials configured)"),
+		}, []string{"profile"})),
+		tool("dba_list_users", "List database users/roles and their attributes (superuser, createdb, createrole, login, connection limit). Read-only privileged query.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+		}, []string{"profile"})),
+		tool("dba_list_databases", "List databases with owner, encoding, collation, and size. Read-only privileged query.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+		}, []string{"profile"})),
+		tool("dba_list_settings", "List server configuration parameters (pg_settings / global_variables), optionally filtered by name substring. Read-only.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+			"filter":  str("Optional name substring filter (e.g. 'work_mem')"),
+		}, []string{"profile"})),
+		tool("dba_list_sessions", "List active sessions/backends (pid, user, database, state, duration, current query). Read-only. Use dba_terminate_session to cancel or kill one.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+		}, []string{"profile"})),
+		tool("dba_create_user", "Create a database user/role. Postgres: CREATE ROLE with LOGIN/SUPERUSER/CREATEDB/CREATEROLE attributes. MySQL/MariaDB: CREATE USER 'name'@'%'. Password (if given) is set and redacted in the audit log. WRITE — audited.", objectSchema(map[string]any{
+			"profile":    str("DB profile id"),
+			"username":   str("Role/user name to create"),
+			"password":   str("Optional password"),
+			"can_login":  boolSchema("Postgres: LOGIN (default true)"),
+			"superuser":  boolSchema("Grant SUPERUSER (postgres)"),
+			"createdb":   boolSchema("Grant CREATEDB (postgres)"),
+			"createrole": boolSchema("Grant CREATEROLE (postgres)"),
+		}, []string{"profile", "username"})),
+		tool("dba_alter_user", "Alter a user/role: change password and/or attributes. Postgres alters LOGIN/SUPERUSER/CREATEDB/CREATEROLE and password; MySQL/MariaDB supports password change. WRITE — audited.", objectSchema(map[string]any{
+			"profile":    str("DB profile id"),
+			"username":   str("Role/user name to alter"),
+			"password":   str("New password (optional)"),
+			"can_login":  boolSchema("Set LOGIN/NOLOGIN (postgres)"),
+			"superuser":  boolSchema("Set SUPERUSER/NOSUPERUSER (postgres)"),
+			"createdb":   boolSchema("Set CREATEDB/NOCREATEDB (postgres)"),
+			"createrole": boolSchema("Set CREATEROLE/NOCREATEROLE (postgres)"),
+		}, []string{"profile", "username"})),
+		tool("dba_drop_user", "Drop a user/role (IF EXISTS). Destructive — requires confirm=true. WRITE — audited.", objectSchema(map[string]any{
+			"profile":  str("DB profile id"),
+			"username": str("Role/user name to drop"),
+			"confirm":  boolSchema("Must be true to proceed"),
+		}, []string{"profile", "username"})),
+		tool("dba_grant", "Grant or revoke privileges. privileges e.g. 'SELECT, INSERT' or 'ALL PRIVILEGES'; object e.g. 'DATABASE mydb', 'schema.table', or 'mydb.*'; grantee is a role/user. Set revoke=true to REVOKE. WRITE — audited. Note: object/privileges are passed through as written — supply exactly the SQL grant target.", objectSchema(map[string]any{
+			"profile":    str("DB profile id"),
+			"privileges": str("Privilege list, e.g. 'SELECT, INSERT' or 'ALL PRIVILEGES'"),
+			"object":     str("Grant target, e.g. 'DATABASE mydb' / 'public.mytable' / 'mydb.*'"),
+			"grantee":    str("Role/user receiving the grant"),
+			"revoke":     boolSchema("REVOKE instead of GRANT"),
+			"with_grant": boolSchema("Add WITH GRANT OPTION (grant only)"),
+		}, []string{"profile", "privileges", "object", "grantee"})),
+		tool("dba_create_database", "Create a database. Postgres: OWNER/ENCODING options; MySQL/MariaDB: CHARACTER SET. WRITE — audited. For postgres, point the profile's dba.connect_string at the 'postgres' maintenance DB so this does not run inside a user database.", objectSchema(map[string]any{
+			"profile":  str("DB profile id"),
+			"name":     str("New database name"),
+			"owner":    str("Owner role (postgres, optional)"),
+			"encoding": str("Encoding/charset (optional)"),
+		}, []string{"profile", "name"})),
+		tool("dba_drop_database", "Drop a database (IF EXISTS). Destructive — requires confirm=true. WRITE — audited.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+			"name":    str("Database name to drop"),
+			"confirm": boolSchema("Must be true to proceed"),
+		}, []string{"profile", "name"})),
+		tool("dba_set_parameter", "Change a server configuration parameter. Postgres: ALTER SYSTEM SET (persisted to postgresql.auto.conf) then pg_reload_conf(); restart-only params are flagged pending_restart. MySQL/MariaDB: SET GLOBAL/SESSION. WRITE — audited.", objectSchema(map[string]any{
+			"profile":   str("DB profile id"),
+			"parameter": str("Bare setting name, e.g. 'work_mem'"),
+			"value":     str("New value"),
+			"scope":     str("MySQL only: GLOBAL (default) or SESSION"),
+		}, []string{"profile", "parameter", "value"})),
+		tool("dba_terminate_session", "Terminate or cancel a session/backend by pid. Postgres: pg_terminate_backend (or pg_cancel_backend when cancel_only=true). MySQL/MariaDB: KILL (or KILL QUERY). WRITE — audited.", objectSchema(map[string]any{
+			"profile":     str("DB profile id"),
+			"pid":         integer("Backend pid / process id (from dba_list_sessions)"),
+			"cancel_only": boolSchema("Cancel the running query but keep the connection (postgres pg_cancel_backend / mysql KILL QUERY)"),
+		}, []string{"profile", "pid"})),
+		tool("dba_run_maintenance", "Run a maintenance operation. Postgres: VACUUM / ANALYZE / REINDEX. MySQL/MariaDB: ANALYZE / OPTIMIZE (table). target is a qualified table/index/database name. WRITE — audited.", objectSchema(map[string]any{
+			"profile":   str("DB profile id"),
+			"operation": str("VACUUM | ANALYZE | REINDEX (postgres) or ANALYZE | OPTIMIZE (mysql)"),
+			"target":    str("Target object (table/index/database); required for REINDEX and mysql ops"),
+		}, []string{"profile", "operation"})),
+		tool("dba_execute", "Escape hatch: run an ARBITRARY privileged SQL statement (DDL/DCL/maintenance) through the DBA connection. Requires confirm=true. The statement is audited verbatim. Use the structured dba_* tools when one fits; use this for anything they do not cover.", objectSchema(map[string]any{
+			"profile": str("DB profile id"),
+			"sql":     str("The privileged statement to execute (single statement)"),
+			"confirm": boolSchema("Must be true to proceed"),
+		}, []string{"profile", "sql"})),
 		tool("db_health_report", "DBA health check: run read-only system-catalog diagnostics against a connected DB profile and flag classic issues — tables without a primary key (high), foreign-key columns lacking a supporting index (medium), unused indexes (low), stale/absent planner statistics (medium), and the largest tables with comment coverage (info). PostgreSQL runs all checks; MySQL/MariaDB run the portable subset and mark the rest unsupported. Read-only (pg_catalog/information_schema); nothing is changed — remediation (CREATE INDEX, ANALYZE) is left to the DBA.", objectSchema(map[string]any{
 			"profile": str("DB profile id to diagnose"),
 		}, []string{"profile"})),
@@ -755,6 +835,29 @@ var adminOnlyTools = map[string]bool{
 	"import_openmetadata_to_profile": true,
 }
 
+// dbaTools are privileged DBA operations. They require the dba/admin capability
+// (toolActorIsDBA) and a DBA-enabled profile; all mutate live DB state through
+// the write-capable admin pool and are audited. Read-only inspection tools
+// (dba_overview / dba_list_*) are included so the whole suite is role-gated as
+// one coherent surface.
+var dbaTools = map[string]bool{
+	"dba_overview":          true,
+	"dba_list_users":        true,
+	"dba_list_databases":    true,
+	"dba_list_settings":     true,
+	"dba_list_sessions":     true,
+	"dba_create_user":       true,
+	"dba_alter_user":        true,
+	"dba_drop_user":         true,
+	"dba_grant":             true,
+	"dba_create_database":   true,
+	"dba_drop_database":     true,
+	"dba_set_parameter":     true,
+	"dba_terminate_session": true,
+	"dba_run_maintenance":   true,
+	"dba_execute":           true,
+}
+
 // dbProfileTools is the single registry for MCP tools that can reach an
 // external DB when their profile argument is set. Besides driving the MCP
 // open-world annotation, it ensures standalone HTTP applies the same master
@@ -831,6 +934,17 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 		return map[string]any{
 			"status": "forbidden",
 			"error":  "tool '" + req.Name + "' requires admin privileges",
+		}, nil
+	}
+	// DBA tools run privileged, write-capable statements against the target DB.
+	// Require the dba (or admin) capability AND a profile that opted in with
+	// DBA credentials (checked at the exec layer). This is a stricter gate than
+	// adminOnlyTools (which only guards shared catalog state).
+	if dbaTools[req.Name] && !s.toolActorIsDBA(ctx) {
+		return map[string]any{
+			"status": "forbidden",
+			"error":  "tool '" + req.Name + "' requires the dba or admin role",
+			"notice": "DBA 도구는 dba/admin 역할과 프로파일의 dba 자격증명(db_profiles.dba)이 모두 필요합니다.",
 		}, nil
 	}
 	if denied, err := s.authorizeDBProfileTool(ctx, req.Name, req.Arguments); err != nil {
@@ -1111,6 +1225,166 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 			}
 		}
 		return s.mcpDBADigest(a.Profile, a.Days, a.SlowMs), nil
+	case "dba_overview":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaOverview(ctx, a.Profile), nil
+	case "dba_list_users":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaListUsers(ctx, a.Profile), nil
+	case "dba_list_databases":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaListDatabases(ctx, a.Profile), nil
+	case "dba_list_settings":
+		var a struct {
+			Profile string `json:"profile"`
+			Filter  string `json:"filter"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaListSettings(ctx, a.Profile, a.Filter), nil
+	case "dba_list_sessions":
+		var a struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaListSessions(ctx, a.Profile), nil
+	case "dba_create_user":
+		var a struct {
+			Profile    string `json:"profile"`
+			Username   string `json:"username"`
+			Password   string `json:"password"`
+			CanLogin   *bool  `json:"can_login"`
+			Superuser  *bool  `json:"superuser"`
+			CreateDB   *bool  `json:"createdb"`
+			CreateRole *bool  `json:"createrole"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaCreateUser(ctx, a.Profile, dbaUserOpts{
+			Username: a.Username, Password: a.Password, CanLogin: a.CanLogin,
+			Superuser: a.Superuser, CreateDB: a.CreateDB, CreateRole: a.CreateRole,
+		}), nil
+	case "dba_alter_user":
+		var a struct {
+			Profile    string `json:"profile"`
+			Username   string `json:"username"`
+			Password   string `json:"password"`
+			CanLogin   *bool  `json:"can_login"`
+			Superuser  *bool  `json:"superuser"`
+			CreateDB   *bool  `json:"createdb"`
+			CreateRole *bool  `json:"createrole"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaAlterUser(ctx, a.Profile, dbaUserOpts{
+			Username: a.Username, Password: a.Password, CanLogin: a.CanLogin,
+			Superuser: a.Superuser, CreateDB: a.CreateDB, CreateRole: a.CreateRole,
+		}), nil
+	case "dba_drop_user":
+		var a struct {
+			Profile  string `json:"profile"`
+			Username string `json:"username"`
+			Confirm  bool   `json:"confirm"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaDropUser(ctx, a.Profile, a.Username, a.Confirm), nil
+	case "dba_grant":
+		var a struct {
+			Profile    string `json:"profile"`
+			Privileges string `json:"privileges"`
+			Object     string `json:"object"`
+			Grantee    string `json:"grantee"`
+			Revoke     bool   `json:"revoke"`
+			WithGrant  bool   `json:"with_grant"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaGrant(ctx, a.Profile, a.Privileges, a.Object, a.Grantee, a.Revoke, a.WithGrant), nil
+	case "dba_create_database":
+		var a struct {
+			Profile  string `json:"profile"`
+			Name     string `json:"name"`
+			Owner    string `json:"owner"`
+			Encoding string `json:"encoding"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaCreateDatabase(ctx, a.Profile, a.Name, a.Owner, a.Encoding), nil
+	case "dba_drop_database":
+		var a struct {
+			Profile string `json:"profile"`
+			Name    string `json:"name"`
+			Confirm bool   `json:"confirm"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaDropDatabase(ctx, a.Profile, a.Name, a.Confirm), nil
+	case "dba_set_parameter":
+		var a struct {
+			Profile   string `json:"profile"`
+			Parameter string `json:"parameter"`
+			Value     string `json:"value"`
+			Scope     string `json:"scope"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaSetParameter(ctx, a.Profile, a.Parameter, a.Value, a.Scope), nil
+	case "dba_terminate_session":
+		var a struct {
+			Profile    string `json:"profile"`
+			PID        int64  `json:"pid"`
+			CancelOnly bool   `json:"cancel_only"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaTerminateSession(ctx, a.Profile, a.PID, a.CancelOnly), nil
+	case "dba_run_maintenance":
+		var a struct {
+			Profile   string `json:"profile"`
+			Operation string `json:"operation"`
+			Target    string `json:"target"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaRunMaintenance(ctx, a.Profile, a.Operation, a.Target), nil
+	case "dba_execute":
+		var a struct {
+			Profile string `json:"profile"`
+			SQL     string `json:"sql"`
+			Confirm bool   `json:"confirm"`
+		}
+		if err := decodeArgs(req.Arguments, &a); err != nil {
+			return nil, err
+		}
+		return s.dbaExecute(ctx, a.Profile, a.SQL, a.Confirm), nil
 	case "list_profile_catalogs":
 		return s.listProfileCatalogs(ctx), nil
 	case "get_profile_catalog":

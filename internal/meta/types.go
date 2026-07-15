@@ -13,6 +13,7 @@ import (
 
 const (
 	RoleAdmin = "admin"
+	RoleDBA   = "dba"
 	RoleUser  = "user"
 
 	ProviderLocal    = "local"
@@ -50,6 +51,10 @@ type User struct {
 }
 
 func (u *User) IsAdmin() bool { return u != nil && u.Role == RoleAdmin }
+
+// IsDBA reports whether the user may perform privileged DBA operations. Admins
+// are a superset — they implicitly hold the DBA capability.
+func (u *User) IsDBA() bool { return u != nil && (u.Role == RoleDBA || u.Role == RoleAdmin) }
 
 type Session struct {
 	TokenHash string     `json:"-"`
