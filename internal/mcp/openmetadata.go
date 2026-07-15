@@ -52,7 +52,45 @@ func (s *Server) omClient() (*openmetadata.Client, error) {
 	if url == "" {
 		return nil, errors.New("OpenMetadata is not configured; set it in /admin/openmetadata, or pass -openmetadata-url (and -openmetadata-token) / JAMYPG_OPENMETADATA_URL/_TOKEN")
 	}
+	if err := openmetadata.ValidateBaseURL(url); err != nil {
+		return nil, err
+	}
 	return openmetadata.New(url, token), nil
+}
+
+func (s *Server) omTestConfig(ctx context.Context, rawURL, token string) map[string]any {
+	rawURL = strings.TrimSpace(rawURL)
+	if err := openmetadata.ValidateBaseURL(rawURL); err != nil {
+		return map[string]any{"reachable": false, "stage": "configuration", "error": err.Error()}
+	}
+	if strings.TrimSpace(token) == "" {
+		_, current, _ := s.omConfig()
+		token = current
+	}
+	c := openmetadata.New(rawURL, token)
+	v, err := c.Version(ctx)
+	if err != nil {
+		return map[string]any{"reachable": false, "stage": omFailureStage(err.Error()), "base_url": c.BaseURL, "has_token": token != "", "error": err.Error()}
+	}
+	return map[string]any{"reachable": true, "stage": "ready", "base_url": c.BaseURL, "has_token": token != "", "server_version": v}
+}
+
+func omFailureStage(msg string) string {
+	m := strings.ToLower(msg)
+	switch {
+	case strings.Contains(m, "401") || strings.Contains(m, "403"):
+		return "authentication"
+	case strings.Contains(m, "timeout") || strings.Contains(m, "deadline"):
+		return "timeout"
+	case strings.Contains(m, "no such host"):
+		return "dns"
+	case strings.Contains(m, "connection refused"):
+		return "network"
+	case strings.Contains(m, "404"):
+		return "api-path"
+	default:
+		return "connection"
+	}
 }
 
 // saveOMConfig persists the runtime connection config atomically. An empty URL
@@ -65,6 +103,9 @@ func (s *Server) saveOMConfig(url, token string) error {
 			return err
 		}
 		return nil
+	}
+	if err := openmetadata.ValidateBaseURL(url); err != nil {
+		return err
 	}
 	// keep the existing token when the caller submits a blank (masked) token
 	if strings.TrimSpace(token) == "" {
@@ -105,7 +146,7 @@ func (s *Server) omStatus(ctx context.Context) map[string]any {
 // omImport fetches OpenMetadata metadata for a scope and proposes it. apply
 // merges into the dataset files and reloads the catalog.
 func (s *Server) omImport(ctx context.Context, scope string, maxTables int, includeGlossary, apply, toReview bool) map[string]any {
-	imp, fetched, err := s.omBuildImport(ctx, scope, maxTables, includeGlossary)
+	imp, fetched, warnings, err := s.omBuildImport(ctx, scope, maxTables, includeGlossary)
 	if err != nil {
 		return map[string]any{"error": "list tables failed: " + err.Error()}
 	}
@@ -116,11 +157,17 @@ func (s *Server) omImport(ctx context.Context, scope string, maxTables int, incl
 		res := s.cat().StageExternalImport(imp)
 		res["fetched_tables"] = fetched
 		res["mode"] = "review"
+		if len(warnings) > 0 {
+			res["warnings"] = warnings
+		}
 		return res
 	}
 
 	res := s.cat().ImportExternalMetadata(imp, apply, time.Now())
 	res["fetched_tables"] = fetched
+	if len(warnings) > 0 {
+		res["warnings"] = warnings
+	}
 	if applied, _ := res["applied"].(bool); applied {
 		// meta-DB mode: persist before reload or the import is reverted
 		if err := s.persistDatasetsToDB("overrides.json", "glossary.json"); err != nil {
@@ -138,16 +185,20 @@ func (s *Server) omImport(ctx context.Context, scope string, maxTables int, incl
 
 // omBuildImport fetches OpenMetadata tables/glossary and maps them to the
 // neutral ExternalImport (shared by import and drift).
-func (s *Server) omBuildImport(ctx context.Context, scope string, maxTables int, includeGlossary bool) (catalog.ExternalImport, int, error) {
+func (s *Server) omBuildImport(ctx context.Context, scope string, maxTables int, includeGlossary bool) (catalog.ExternalImport, int, []string, error) {
 	c, err := s.omClient()
 	if err != nil {
-		return catalog.ExternalImport{}, 0, err
+		return catalog.ExternalImport{}, 0, nil, err
 	}
 	tables, terr := c.ListTables(ctx, scope, maxTables)
 	if terr != nil && len(tables) == 0 {
-		return catalog.ExternalImport{}, 0, terr
+		return catalog.ExternalImport{}, 0, nil, terr
 	}
 	imp := catalog.ExternalImport{Source: "openmetadata"}
+	var warnings []string
+	if terr != nil {
+		warnings = append(warnings, "일부 테이블 페이지를 가져오지 못했습니다: "+terr.Error())
+	}
 	for _, t := range tables {
 		fqn := openmetadata.SchemaTable(t.FullyQualifiedName)
 		if fqn == "" {
@@ -169,19 +220,24 @@ func (s *Server) omBuildImport(ctx context.Context, scope string, maxTables int,
 				}
 				imp.Glossary = append(imp.Glossary, catalog.ExternalGlossaryTerm{Term: name, Synonyms: gt.Synonyms, Description: gt.Description, Category: "imported"})
 			}
+		} else {
+			warnings = append(warnings, "용어집을 가져오지 못해 테이블 메타데이터만 처리합니다: "+gerr.Error())
 		}
 	}
-	return imp, len(tables), nil
+	return imp, len(tables), warnings, nil
 }
 
 // omDrift reports where jamypg and OpenMetadata diverge (gaps / conflicts).
 func (s *Server) omDrift(ctx context.Context, scope string, maxTables int) map[string]any {
-	imp, fetched, err := s.omBuildImport(ctx, scope, maxTables, false)
+	imp, fetched, warnings, err := s.omBuildImport(ctx, scope, maxTables, false)
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}
 	res := s.cat().DiffExternalMetadata(imp)
 	res["fetched_tables"] = fetched
+	if len(warnings) > 0 {
+		res["warnings"] = warnings
+	}
 	return res
 }
 

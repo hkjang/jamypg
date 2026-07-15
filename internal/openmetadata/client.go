@@ -32,6 +32,24 @@ func New(baseURL, token string) *Client {
 	return &Client{BaseURL: b, Token: strings.TrimSpace(token), HTTP: &http.Client{Timeout: 30 * time.Second}}
 }
 
+// ValidateBaseURL rejects malformed or unsafe-to-interpret targets before a
+// config is persisted. OpenMetadata may be HTTP on an internal network, so
+// both http and https are accepted, but credentials/userinfo are not.
+func ValidateBaseURL(baseURL string) error {
+	raw := strings.TrimSpace(baseURL)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("OpenMetadata URL must be an absolute http(s) URL, e.g. http://openmetadata:8585")
+	}
+	if u.User != nil {
+		return fmt.Errorf("OpenMetadata URL must not contain credentials; use the bot token field")
+	}
+	if strings.Contains(strings.TrimRight(u.Path, "/"), "/api/") {
+		return fmt.Errorf("OpenMetadata URL must end at the server root or /api, not an /api/v1 resource path")
+	}
+	return nil
+}
+
 // Configured reports whether a base URL is set.
 func (c *Client) Configured() bool { return c != nil && c.BaseURL != "" }
 
@@ -85,10 +103,15 @@ func (c *Client) ListTables(ctx context.Context, scope string, maxTables int) ([
 	const pageSize = 100
 	var out []Table
 	after := ""
+	seenCursors := map[string]bool{}
 	for len(out) < maxTables {
 		q := url.Values{}
 		q.Set("fields", "columns,tags,description")
-		q.Set("limit", fmt.Sprint(pageSize))
+		limit := pageSize
+		if remaining := maxTables - len(out); remaining < limit {
+			limit = remaining
+		}
+		q.Set("limit", fmt.Sprint(limit))
 		if scope != "" {
 			// scope may be a database ("svc.db") or schema ("svc.db.schema") FQN
 			q.Set("database", scope)
@@ -109,6 +132,10 @@ func (c *Client) ListTables(ctx context.Context, scope string, maxTables int) ([
 		if page.Paging.After == "" || len(page.Data) == 0 {
 			break
 		}
+		if seenCursors[page.Paging.After] {
+			return out, fmt.Errorf("openmetadata table pagination cursor repeated: %q", page.Paging.After)
+		}
+		seenCursors[page.Paging.After] = true
 		after = page.Paging.After
 	}
 	if len(out) > maxTables {
@@ -125,10 +152,15 @@ func (c *Client) ListGlossaryTerms(ctx context.Context, maxTerms int) ([]Glossar
 	const pageSize = 100
 	var out []GlossaryTerm
 	after := ""
+	seenCursors := map[string]bool{}
 	for len(out) < maxTerms {
 		q := url.Values{}
 		q.Set("fields", "synonyms,description")
-		q.Set("limit", fmt.Sprint(pageSize))
+		limit := pageSize
+		if remaining := maxTerms - len(out); remaining < limit {
+			limit = remaining
+		}
+		q.Set("limit", fmt.Sprint(limit))
 		if after != "" {
 			q.Set("after", after)
 		}
@@ -140,6 +172,10 @@ func (c *Client) ListGlossaryTerms(ctx context.Context, maxTerms int) ([]Glossar
 		if page.Paging.After == "" || len(page.Data) == 0 {
 			break
 		}
+		if seenCursors[page.Paging.After] {
+			return out, fmt.Errorf("openmetadata glossary pagination cursor repeated: %q", page.Paging.After)
+		}
+		seenCursors[page.Paging.After] = true
 		after = page.Paging.After
 	}
 	if len(out) > maxTerms {

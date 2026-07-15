@@ -58,6 +58,9 @@
   #toast { position:fixed; right:18px; bottom:18px; background:#101a2e; color:#e8eefc; border-radius:10px; padding:12px 18px; font-size:13px; display:none; max-width:480px; z-index:50; box-shadow:0 6px 24px rgba(0,0,0,.25); }
   .flow { font-size:12px; color:var(--sub); margin-bottom:12px; }
   .flow b { color:var(--blue); }
+  .hero{background:linear-gradient(135deg,#10203c,#245b91);color:#fff;border:0;padding:22px;box-shadow:0 12px 34px rgba(20,55,105,.16)}.hero h2{font-size:21px;margin:0 0 5px}.hero p{margin:0;color:#cbdcf5}.examples{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}.example{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:5px 10px;cursor:pointer;font-size:12px}.example:hover{background:#fff;color:#245b91}
+  .query-card{border-top:4px solid var(--blue)}.query-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}.query-head h2{margin:0}.profile-select{border:1px solid var(--line);border-radius:7px;padding:7px 10px;min-width:220px}.context{padding:7px 10px;background:#f2f6ff;border-radius:8px;color:#365277;font-size:12px}.steps-nav{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-bottom:12px}.steps-nav span{background:#eef2f7;border-radius:6px;padding:6px;text-align:center;font-size:11px;color:var(--sub)}
+  @media(max-width:700px){main{padding:12px}.hero{padding:17px}.steps-nav{grid-template-columns:repeat(3,1fr)}.askbar .profile-select,.askbar input{width:100%!important;flex:auto!important}}
 </style>
 </head>
 <body>
@@ -69,10 +72,12 @@
 </header>
 
 <main>
-  <div class="card">
-    <div class="flow">파이프라인: <b>질문 분석</b> → <b>테이블 탐색</b> → <b>지표 정의</b> → <b>스키마 컨텍스트</b> → <b>조인 경로</b> → <b>SQL 스켈레톤</b> — 한 번에 실행하고 결과를 아래에 시각화합니다. (실제 SQL 실행은 아님 — 준비 단계)</div>
+  <div class="card hero"><h2>업무 질문을 실행 가능한 SQL 구조로 준비하세요</h2><p>DB 프로파일의 전용 카탈로그를 사용해 테이블·지표·조인 근거를 한 번에 구성합니다. 실제 DB 실행 전 준비 단계입니다.</p><div class="examples"><button class="example">최근 3개월 지역별 매출 추이</button><button class="example">이번 달 신규 고객 수</button><button class="example">오류율이 높은 서비스 상위 10개</button></div></div>
+  <div class="card query-card">
+    <div class="query-head"><h2>질문 입력</h2><span class="grow"></span><span class="context" id="catalogContext">활성 카탈로그 사용</span></div>
     <textarea id="q" placeholder="예) 최근 3개월 지역별 연체율 상위 10개 지점을 보여줘"></textarea>
     <div class="askbar">
+      <select id="profile" class="profile-select"><option value="">활성 카탈로그 (기본)</option></select>
       <input id="tables" placeholder="테이블 강제 지정 (선택, 쉼표구분)" style="flex:1; min-width:200px">
       <input id="limit" type="number" placeholder="행 제한 (예 100)" style="width:130px">
       <button class="btn primary" id="askBtn" onclick="ask()">준비하기 ▶</button>
@@ -94,6 +99,7 @@
   </div>
 
   <div id="steps" class="steps">
+    <div class="steps-nav"><span>1 질문 분석</span><span>2 테이블</span><span>3 지표</span><span>4 스키마</span><span>5 조인</span><span>6 SQL 구조</span></div>
     <div class="cols">
       <div class="card">
         <h2>① 질문 분석</h2>
@@ -125,7 +131,7 @@
 
     <div class="card">
       <h2>⑥ SQL 스켈레톤</h2>
-      <div class="mini" style="margin-bottom:8px">주석 <code class="slot">/* SLOT */</code> 부분만 채워 하나의 Oracle SELECT로 완성하세요. 아래는 카탈로그가 안전하게 조립한 뼈대입니다.</div>
+      <div class="mini" style="margin-bottom:8px">주석 <code class="slot">/* SLOT */</code> 부분을 채워 선택한 DB 방언의 단일 SELECT로 완성하세요. 아래는 카탈로그가 안전하게 조립한 뼈대입니다.</div>
       <pre id="skeleton" class="sql">—</pre>
       <div class="toolbar">
         <button class="btn" onclick="copySkeleton()">📋 스켈레톤 복사</button>
@@ -171,7 +177,7 @@ async function ask(keepAnswers) {
   LAST_QUESTION = question;
   const tables = $('#tables').value.split(',').map(s => s.trim()).filter(Boolean);
   const limit = Number($('#limit').value) || 0;
-  const body = { question, tables, limit, clarifications: CLAR_ANSWERS };
+  const body = { question, profile:$('#profile').value, tables, limit, clarifications: CLAR_ANSWERS };
   if ($('#followupChk').checked && READY_QUESTION && READY_QUESTION !== question)
     body.previous_question = READY_QUESTION;
   $('#askBtn').disabled = true;
@@ -190,6 +196,7 @@ async function ask(keepAnswers) {
       return;
     }
     BUNDLE = data;
+    $('#catalogContext').textContent=(data.profile?data.profile+' · ':'')+(data.catalog_source||'active');
     render(data);
     READY_QUESTION = data.followup && READY_QUESTION ? READY_QUESTION : question;
     $('#followupWrap').style.display = '';
@@ -287,12 +294,22 @@ function copySkeleton() {
 function toDB() {
   const sql = (BUNDLE && BUNDLE.skeleton && (BUNDLE.skeleton.skeleton_sql || BUNDLE.skeleton.sql)) || '';
   if (sql) sessionStorage.setItem('jasqlHandoffSQL', sql);
+  if ($('#profile').value) localStorage.setItem('jasqlLastProfile',$('#profile').value);
   location.href = '/admin/db';
 }
 
+async function loadProfiles(){
+  try{const r=await fetch('/api/db-profiles',{headers:headers()});const d=await r.json();const last=localStorage.getItem('jasqlLastProfile')||'';
+    $('#profile').innerHTML='<option value="">활성 카탈로그 (기본)</option>'+(d.profiles||[]).map(p=>'<option value="'+esc(p.id)+'"'+(p.id===last?' selected':'')+'>'+esc(p.id)+(p.name?' — '+esc(p.name):'')+'</option>').join('');
+    $('#profile').dispatchEvent(new Event('change'));const hp=sessionStorage.getItem('jasqlHistoryPrompt');if(hp){$('#q').value=hp;sessionStorage.removeItem('jasqlHistoryPrompt');}
+  }catch(e){}
+}
+$('#profile').addEventListener('change',()=>{$('#catalogContext').textContent=$('#profile').value?$('#profile').value+' 전용 카탈로그':'활성 카탈로그 사용';});
+document.querySelectorAll('.example').forEach(b=>b.onclick=()=>{$('#q').value=b.textContent;$('#q').focus();});
+
 $('#q').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); ask(); } });
 
-JASQL.mount({ page: 'ask' });
+JASQL.mount({ page: 'ask',onReady:loadProfiles });
 </script>
 </body>
 </html>

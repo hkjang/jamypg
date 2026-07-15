@@ -157,6 +157,7 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 		}
 		var req struct {
 			Question         string            `json:"question"`
+			Profile          string            `json:"profile"`
 			Tables           []string          `json:"tables"`
 			Limit            int               `json:"limit"`
 			Clarifications   map[string]string `json:"clarifications"`
@@ -171,7 +172,19 @@ func (s *Server) registerDBAPI(mux *http.ServeMux) {
 			writeAPIError(w, http.StatusBadRequest, errEmpty("question is required"))
 			return
 		}
-		writeJSON(w, http.StatusOK, s.cat().PrepareFollowup(req.Question, req.PreviousQuestion, req.PreviousSQL, req.Tables, req.Limit, time.Now(), req.Clarifications))
+		if req.Profile != "" {
+			if err := s.canUseProfileID(r.Context(), userFrom(r.Context()), req.Profile); err != nil {
+				writeAPIError(w, http.StatusForbidden, err)
+				return
+			}
+		}
+		vcat, source := s.catalogFor(req.Profile)
+		out := vcat.PrepareFollowup(req.Question, req.PreviousQuestion, req.PreviousSQL, req.Tables, req.Limit, time.Now(), req.Clarifications)
+		out["catalog_source"] = source
+		if req.Profile != "" {
+			out["profile"] = req.Profile
+		}
+		writeJSON(w, http.StatusOK, out)
 	})
 
 	execute := func(preview bool) http.HandlerFunc {

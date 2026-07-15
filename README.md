@@ -5,7 +5,7 @@
 </p>
 
 Go-based MCP server for metadata-grounded NL2SQL over **PostgreSQL, MySQL, and
-MariaDB**. Current source version: `v0.56.0` (converted from the Oracle-based
+MariaDB**. Current source version: `v0.57.0` (converted from the Oracle-based
 jasql project).
 
 The server loads JSON metadata from a dataset directory (e.g. `data/metadb`,
@@ -25,7 +25,7 @@ client libraries, no build tags.
 | --- | --- |
 | 로컬 HTTP MCP + 관리자 UI | `go run ./cmd/jamypg-mcp -transport http -data ./data/metadb -addr 127.0.0.1:9797` |
 | 로컬 stdio MCP | `go run ./cmd/jamypg-mcp -transport stdio -data ./data/metadb` |
-| 컨테이너 (모든 DB 실행 가능) | `docker build -t jamypg-mcp:v0.56.0 .` |
+| 컨테이너 (모든 DB 실행 가능) | `docker build -t jamypg-mcp:v0.57.0 .` |
 | 통합 테스트 DB 3종 기동 | `docker compose -f deploy/test/docker-compose.yml up -d` |
 | 통합 테스트 (pg+mysql+mariadb) | `go test -tags integration ./test/integration -v` |
 
@@ -110,11 +110,11 @@ go build -o ./bin/jamypg-mcp ./cmd/jamypg-mcp
 `Dockerfile.oracle`/Instant Client 절차는 제거되었습니다):
 
 ```sh
-docker build -t jamypg-mcp:v0.56.0 .
+docker build -t jamypg-mcp:v0.57.0 .
 docker run --rm -p 9797:9797 \
   -e JAMYPG_ADMIN_TOKEN=change-me \
   -e PG_PROD_PW=... \
-  jamypg-mcp:v0.56.0
+  jamypg-mcp:v0.57.0
 ```
 
 DB 프로파일은 `/admin/db` 또는 DB profile REST/MCP API로 구성한 뒤

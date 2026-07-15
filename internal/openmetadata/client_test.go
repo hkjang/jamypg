@@ -23,6 +23,19 @@ func TestNewNormalizesURL(t *testing.T) {
 	}
 }
 
+func TestValidateBaseURL(t *testing.T) {
+	for _, good := range []string{"http://openmetadata:8585", "https://meta.example.com/api"} {
+		if err := ValidateBaseURL(good); err != nil {
+			t.Errorf("ValidateBaseURL(%q): %v", good, err)
+		}
+	}
+	for _, bad := range []string{"openmetadata:8585", "ftp://host", "http://user:pass@host", "http://host/api/v1/tables"} {
+		if err := ValidateBaseURL(bad); err == nil {
+			t.Errorf("ValidateBaseURL(%q) should fail", bad)
+		}
+	}
+}
+
 func TestSchemaTable(t *testing.T) {
 	cases := map[string]string{
 		"svc.db.public.customer":      "public.customer",
@@ -83,6 +96,17 @@ func TestListTablesPaginates(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected 2 page calls, got %d", calls)
+	}
+}
+
+func TestListTablesStopsOnRepeatedCursor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(tableList{Data: []Table{{Name: "a"}}, Paging: paging{After: "same"}})
+	}))
+	defer srv.Close()
+	tables, err := New(srv.URL, "").ListTables(context.Background(), "", 500)
+	if err == nil || !strings.Contains(err.Error(), "cursor repeated") || len(tables) != 2 {
+		t.Fatalf("repeated cursor should stop safely with partial data, tables=%d err=%v", len(tables), err)
 	}
 }
 

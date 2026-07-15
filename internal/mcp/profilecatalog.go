@@ -289,7 +289,7 @@ func (s *Server) buildAllProfileCatalogs(ctx context.Context, profiles []string,
 // apply=false previews; apply=true merges into the workspace (gaps only,
 // existing values preserved). ADMIN.
 func (s *Server) omImportToProfile(ctx context.Context, profileID, scope string, apply bool) map[string]any {
-	imp, fetched, err := s.omBuildImport(ctx, scope, 0, true)
+	imp, fetched, warnings, err := s.omBuildImport(ctx, scope, 0, true)
 	if err != nil {
 		return map[string]any{"error": "openmetadata fetch failed: " + err.Error()}
 	}
@@ -305,6 +305,9 @@ func (s *Server) omImportToProfile(ctx context.Context, profileID, scope string,
 	res["profile"] = profileID
 	res["fetched_tables"] = fetched
 	res["target"] = "profile-workspace"
+	if len(warnings) > 0 {
+		res["warnings"] = warnings
+	}
 	return res
 }
 
