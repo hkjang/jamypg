@@ -233,7 +233,25 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, res)
 	})
 	mux.HandleFunc("GET /api/profile-catalogs/{profile}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, s.getProfileCatalog(r.PathValue("profile")))
+		profile := r.PathValue("profile")
+		if err := s.canUseProfileID(r.Context(), userFrom(r.Context()), profile); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.getProfileCatalog(profile))
+	})
+	mux.HandleFunc("GET /api/profile-catalogs/{profile}/schemas", func(w http.ResponseWriter, r *http.Request) {
+		profile := r.PathValue("profile")
+		if err := s.canUseProfileID(r.Context(), userFrom(r.Context()), profile); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		schemas, err := s.metasyncService().DiscoverSchemas(r.Context(), profile)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"profile": profile, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"profile": profile, "schemas": schemas, "count": len(schemas)})
 	})
 	mux.HandleFunc("POST /api/profile-catalogs/{profile}/build", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
@@ -252,7 +270,12 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, res)
 	})
 	mux.HandleFunc("GET /api/profile-catalogs/{profile}/dataset/{name}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, s.getProfileDataset(r.PathValue("profile"), r.PathValue("name")))
+		profile := r.PathValue("profile")
+		if err := s.canUseProfileID(r.Context(), userFrom(r.Context()), profile); err != nil {
+			writeAPIError(w, http.StatusForbidden, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.getProfileDataset(profile, r.PathValue("name")))
 	})
 	mux.HandleFunc("PUT /api/profile-catalogs/{profile}/dataset/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {

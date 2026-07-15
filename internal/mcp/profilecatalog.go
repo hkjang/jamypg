@@ -137,11 +137,12 @@ func (s *Server) listProfileCatalogs(ctx context.Context) map[string]any {
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}
-	activeDir := s.cat().DataDir
+	activeDir, _ := filepath.Abs(s.cat().DataDir)
 	out := make([]map[string]any, 0, len(profs))
 	for _, p := range profs {
 		dir := s.profileCatalogDir(p.ID)
-		entry := map[string]any{"profile": p.ID, "name": p.Name, "type": p.Type, "workspace": false, "active": dir == activeDir}
+		absDir, _ := filepath.Abs(dir)
+		entry := map[string]any{"profile": p.ID, "name": p.Name, "type": p.Type, "workspace": false, "active": absDir == activeDir}
 		if fi, err := os.Stat(filepath.Join(dir, "meta_physical_models.json")); err == nil {
 			entry["workspace"] = true
 			entry["built_at"] = fi.ModTime().UTC().Format(time.RFC3339)
@@ -152,6 +153,8 @@ func (s *Server) listProfileCatalogs(ctx context.Context) map[string]any {
 				q := cat.QualityReport()
 				entry["quality_score"] = q.OverallScore
 				entry["quality_grade"] = q.OverallGrade
+			} else {
+				entry["load_error"] = err.Error()
 			}
 		}
 		out = append(out, entry)
@@ -355,6 +358,12 @@ func (s *Server) activeCatalogInfo() map[string]any {
 		"active_dir":      activeDir,
 		"operational_dir": s.opDir(),
 		"is_default":      activeDir == s.opDir(),
+		"can_activate":    !s.datasetsInDB(),
+	}
+	if s.datasetsInDB() {
+		info["activation_note"] = "메타 DB 모드에서는 요청의 profile 값으로 워크스페이스가 자동 선택됩니다. 전역 활성 전환은 필요하지 않습니다."
+	} else {
+		info["activation_note"] = "단독 모드에서는 워크스페이스를 전역 활성 카탈로그로 임시 전환할 수 있습니다."
 	}
 	base := filepath.Join(s.opDir(), "profiles") + string(filepath.Separator)
 	if strings.HasPrefix(activeDir, base) {
