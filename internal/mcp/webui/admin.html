@@ -32,6 +32,13 @@
   .btn.danger:hover { background:var(--red-soft); }
   .btn:disabled { opacity:.45; cursor:not-allowed; }
   main { max-width:1500px; margin:0 auto; padding:18px 22px 60px; }
+  .hero { margin-bottom:16px; background:linear-gradient(135deg,#fff 45%,#edf3ff); display:grid; grid-template-columns:1fr auto; gap:18px; align-items:center; }
+  .hero h2 { margin:0 0 4px; font-size:20px; }.hero p{margin:0;color:var(--sub)}
+  .flow { display:flex; gap:7px; flex-wrap:wrap; }.flow span{border:1px solid #c9d7f2;background:#fff;border-radius:18px;padding:6px 10px;color:var(--sub);font-size:12px}.flow b{color:var(--blue)}
+  .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:10px 0 12px; }
+  .summary div { padding:9px 10px;border-radius:8px;background:#f7f9fc;border:1px solid var(--line); }.summary span{display:block;color:var(--sub);font-size:11px}.summary b{font-size:16px}
+  .filters { display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}.filters button{border:1px solid var(--line);background:#fff;border-radius:16px;padding:4px 9px;cursor:pointer;color:var(--sub)}.filters button.on{background:var(--blue-soft);border-color:#9db9f6;color:var(--blue);font-weight:700}
+  #dsSearch { width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
   /* guide */
   details.guide { margin-bottom:18px; }
@@ -53,6 +60,7 @@
   /* layout */
   .cols { display:grid; grid-template-columns:minmax(430px,46%) 1fr; gap:18px; align-items:start; }
   @media (max-width:1100px){ .cols { grid-template-columns:1fr; } }
+  @media (max-width:700px){main{padding:10px}.hero{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.cols{display:block}.cols>.card{margin-bottom:12px}header input{width:150px;flex:1}}
   /* dataset table */
   table.ds { width:100%; border-collapse:collapse; font-size:13px; }
   table.ds th { text-align:left; color:var(--sub); font-weight:600; padding:7px 9px; border-bottom:2px solid var(--line); }
@@ -109,11 +117,15 @@
 </header>
 
 <main>
+  <div class="card hero"><div><h2>데이터 품질을 한 화면에서 관리하세요</h2><p>상태를 먼저 확인하고, 영향 기능과 스키마를 검토한 뒤 안전하게 편집·복원합니다.</p></div><div class="flow"><span><b>1</b> 찾기</span><span><b>2</b> 영향 확인</span><span><b>3</b> 검증·적용</span><span><b>4</b> 복원</span></div></div>
   <div class="cols">
     <div class="card">
       <div class="toolbar" style="justify-content:space-between">
         <b>데이터셋 목록</b><span class="mini" id="dataDir"></span>
       </div>
+      <div class="summary" id="summary"></div>
+      <input id="dsSearch" type="search" placeholder="데이터셋 이름, 파일, 용도 검색" oninput="renderRows()">
+      <div class="filters" id="filters"><button class="on" data-filter="all">전체</button><button data-filter="issue">이슈</button><button data-filter="editable">편집 가능</button><button data-filter="missing">파일 없음</button></div>
       <table class="ds">
         <thead><tr><th>데이터셋</th><th>속성</th><th>상태</th><th>로드</th></tr></thead>
         <tbody id="dsRows"><tr><td colspan="4" class="empty">불러오는 중…</td></tr></tbody>
@@ -135,6 +147,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let DATASETS = [], SELECTED = null;
+let FILTER = 'all';
 
 const tokenInput = $('#adminToken');
 tokenInput.value = localStorage.getItem('jasqlAdminToken') || '';
@@ -177,7 +190,15 @@ async function refreshList(keepSel = true) {
   const data = await api('GET', '/api/datasets');
   DATASETS = data.datasets;
   $('#dataDir').textContent = '경로: ' + data.data_dir;
-  const rows = DATASETS.map(d => {
+  $('#summary').innerHTML = '<div><span>전체</span><b>'+DATASETS.length+'</b></div><div><span>정상 파일</span><b>'+DATASETS.filter(d=>d.present).length+'</b></div><div><span>확인 필요</span><b>'+DATASETS.filter(d=>d.issues&&d.issues.length).length+'</b></div><div><span>편집 가능</span><b>'+DATASETS.filter(d=>d.editable).length+'</b></div>';
+  renderRows();
+  if (keepSel && SELECTED) renderDetail();
+}
+function renderRows() {
+  const q = ($('#dsSearch').value || '').trim().toLowerCase();
+  const list = DATASETS.filter(d => (!q || [d.name,d.file,d.description,(d.used_by||[]).join(' ')].join(' ').toLowerCase().includes(q)) &&
+    (FILTER==='all' || (FILTER==='issue' && d.issues&&d.issues.length) || (FILTER==='editable'&&d.editable) || (FILTER==='missing'&&!d.present)));
+  const rows = list.map(d => {
     const badges =
       (d.required ? '<span class="b req">필수</span>' : '<span class="b opt">선택</span>') +
       (d.editable ? '<span class="b edit">편집가능</span>' : '<span class="b sys">시스템</span>');
@@ -195,8 +216,8 @@ async function refreshList(keepSel = true) {
   $('#dsRows').innerHTML = rows || '<tr><td colspan="4" class="empty">데이터셋 없음</td></tr>';
   document.querySelectorAll('#dsRows tr.row').forEach(tr =>
     tr.addEventListener('click', () => select(tr.dataset.name)));
-  if (keepSel && SELECTED) renderDetail();
 }
+document.querySelectorAll('#filters button').forEach(btn => btn.addEventListener('click', () => { FILTER=btn.dataset.filter; document.querySelectorAll('#filters button').forEach(b=>b.classList.toggle('on',b===btn)); renderRows(); }));
 async function refreshAll() { await Promise.all([refreshHealth(), refreshList()]); toast('새로고침 완료'); }
 
 /* ---------- detail ---------- */
@@ -204,6 +225,7 @@ async function select(name) {
   SELECTED = name;
   document.querySelectorAll('#dsRows tr.row').forEach(tr => tr.classList.toggle('sel', tr.dataset.name === name));
   await renderDetail();
+  if (innerWidth < 1100) $('#detail').scrollIntoView({behavior:'smooth',block:'start'});
 }
 async function renderDetail() {
   const d = DATASETS.find(x => x.name === SELECTED);
@@ -223,7 +245,7 @@ async function renderDetail() {
     '<div>' + (d.required ? '<span class="b req">필수</span>' : '<span class="b opt">선택</span>') +
       (d.editable ? '<span class="b edit">편집가능</span>' : '<span class="b sys">시스템 관리</span>') +
       '<span class="b opt">' + esc(d.format) + '</span></div>' +
-    '<div class="sect"><h4>용도</h4><div>' + esc(d.description) + '</div></div>' +
+    '<div class="sect"><h4>용도와 변경 영향</h4><div>' + esc(d.description) + '</div><div class="result info" style="display:block;margin-top:8px">이 데이터는 아래 기능에서 즉시 사용됩니다. 적용 전에 샘플과 이슈를 확인하고, 이상 시 백업에서 복원하세요.</div></div>' +
     '<div class="sect"><h4>이 데이터를 사용하는 기능</h4><div>' +
       d.used_by.map(u => '<span class="b opt">' + esc(u) + '</span>').join(' ') + '</div></div>' +
     '<div class="sect"><h4>기대 스키마 — 이 구조 그대로 작성하세요</h4><pre class="schema">' + esc(d.schema) + '</pre></div>' +
