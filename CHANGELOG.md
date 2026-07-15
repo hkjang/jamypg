@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.56.0 — 2026-07-15
+
+### Profile catalog reliability and workflow
+
+- Added live schema discovery and selectable collection scope before building
+  a profile catalog workspace.
+- Profile catalog APIs now enforce profile access checks for direct workspace
+  and dataset reads.
+- Workspace load failures and per-profile batch build failures are surfaced
+  with actionable detail instead of being hidden behind aggregate counts.
+- The UI now reflects the actual activation model: standalone mode supports a
+  temporary global switch, while meta-DB mode automatically uses the workspace
+  selected by each request's profile.
+- Redesigned the profile catalog screen around the select, discover, build,
+  review, and enrich workflow with search, readiness state, guided empty
+  states, responsive controls, and clearer dataset counts.
+
 ## v0.55.0 — 2026-07-15
 
 ### Database connection UX and diagnostics

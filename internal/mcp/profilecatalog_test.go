@@ -143,3 +143,14 @@ func TestWorkspaceCatalogCacheAndCatalogFor(t *testing.T) {
 		t.Fatalf("catalogFor should pick the workspace, got %q", src2)
 	}
 }
+
+func TestActiveCatalogInfoAdvertisesActivationCapability(t *testing.T) {
+	s := newPCServer(t)
+	info := s.activeCatalogInfo()
+	if got, ok := info["can_activate"].(bool); !ok || !got {
+		t.Fatalf("standalone catalog should advertise activation capability: %+v", info)
+	}
+	if info["activation_note"] == "" {
+		t.Fatalf("activation guidance missing: %+v", info)
+	}
+}
