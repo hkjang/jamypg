@@ -59,6 +59,14 @@
   .mini { font-size:12px; color:var(--sub); }
   #toast { position:fixed; right:18px; bottom:18px; background:#101a2e; color:#e8eefc; border-radius:10px; padding:12px 18px; font-size:13px; display:none; max-width:480px; z-index:50; box-shadow:0 6px 24px rgba(0,0,0,.25); }
   h2 { font-size:15px; margin:0 0 10px; }
+  .profile-hero{background:linear-gradient(135deg,#10203c,#1d4f91);color:#fff;border:0;padding:22px;box-shadow:0 12px 34px rgba(20,55,105,.16)}
+  .profile-hero h2{font-size:21px;margin-bottom:5px}.profile-hero p{margin:0;color:#cbdcf5}.profile-hero .btn{font-weight:700}
+  .form-shell{background:#fbfcff;border:1px solid #cbd8eb!important;border-radius:14px;padding:0!important;overflow:hidden}.form-head{padding:18px 20px;background:#f0f5fd;border-bottom:1px solid #d7e1ef;display:flex;gap:12px;align-items:center}.form-head h2{font-size:18px;margin:0}.form-body{padding:20px}
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:20px}.flow-step{padding:9px 10px;border-bottom:3px solid #dce3ed;color:var(--sub);font-size:12px}.flow-step b{display:inline-grid;place-items:center;width:22px;height:22px;margin-right:6px;border-radius:50%;background:#e3e8f0}.flow-step.active{border-color:var(--blue);color:var(--blue);font-weight:700}.flow-step.active b{background:var(--blue);color:#fff}
+  .engine-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:7px 0 16px}.engine-card{position:relative;border:1px solid var(--line);background:#fff;border-radius:11px;padding:13px;cursor:pointer;transition:.15s}.engine-card:hover{transform:translateY(-1px);border-color:#91afe0}.engine-card.selected{border:2px solid var(--blue);background:#f4f8ff;padding:12px;box-shadow:0 4px 15px rgba(37,99,235,.1)}.engine-card input{position:absolute;opacity:0}.engine-card b{display:block;font-size:14px}.engine-card span{font-size:11.5px;color:var(--sub)}
+  .field-section{background:#fff;border:1px solid var(--line);border-radius:11px;padding:15px;margin-bottom:12px}.field-section h3{font-size:13px;margin:0 0 5px}.field-section>p{font-size:12px;color:var(--sub);margin:0 0 10px}.field-hint{font-size:11.5px;color:var(--sub);margin-top:4px}.form-actions{position:sticky;bottom:0;background:rgba(255,255,255,.96);border-top:1px solid var(--line);padding:12px 20px;margin:18px -20px -20px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(6px)}
+  .diagnostic{margin-top:7px;border-left:3px solid var(--red);padding:7px 10px;background:#fff6f6;border-radius:0 7px 7px 0}.diagnostic b{display:block}.diagnostic ul{margin:5px 0 0;padding-left:18px}
+  @media(max-width:760px){.engine-grid,.flow{grid-template-columns:1fr}.flow-step{display:none}.flow-step.active{display:block}.form-body{padding:14px}.form-actions{margin-left:-14px;margin-right:-14px}.profile-hero .toolbar{align-items:flex-start}}
 </style>
 </head>
 <body>
@@ -71,6 +79,7 @@
 </header>
 
 <main>
+  <div class="card profile-hero"><div class="toolbar" style="margin:0"><div><h2>데이터베이스 연결 시작하기</h2><p>엔진을 선택하고 읽기 전용 계정으로 연결한 뒤, 저장과 동시에 실제 접속을 확인하세요.</p></div><span style="flex:1"></span><button class="btn" onclick="openForm(null)">＋ 새 DB 연결</button></div></div>
   <div class="card">
     <div class="toolbar" style="justify-content:space-between">
       <h2 style="margin:0">DB 프로파일</h2>
@@ -83,21 +92,33 @@
       <thead><tr><th>ID / 이름</th><th>접속 문자열</th><th>계정</th><th>풀 / 정책</th><th>상태</th><th style="width:230px">작업</th></tr></thead>
       <tbody id="pRows"><tr><td colspan="6" class="mini">불러오는 중…</td></tr></tbody>
     </table>
-    <div id="formWrap" style="display:none; margin-top:14px; border-top:1px dashed var(--line); padding-top:12px;">
-      <h2 id="formTitle">프로파일 추가</h2>
+    <div id="formWrap" class="form-shell" style="display:none; margin-top:14px">
+      <div class="form-head"><div><span class="mini">DB CONNECTION WIZARD</span><h2 id="formTitle">프로파일 추가</h2></div><span style="flex:1"></span><button class="btn" type="button" onclick="closeForm()">닫기</button></div>
       <form class="pform" onsubmit="return saveProfile(event)">
+       <div class="form-body">
+        <div class="flow"><div class="flow-step active"><b>1</b>DB 엔진</div><div class="flow-step active"><b>2</b>접속 정보</div><div class="flow-step"><b>3</b>운영 정책</div><div class="flow-step"><b>4</b>검증·저장</div></div>
+        <div class="field-section"><h3>1. 데이터베이스 엔진</h3><p>엔진에 따라 드라이버와 접속 방식, SQL 방언이 결정됩니다. 잘못 선택하면 연결할 수 없습니다.</p>
+          <div class="engine-grid">
+            <label class="engine-card selected" data-engine="postgres"><input type="radio" name="dbtype" value="postgres" checked><b>🐘 PostgreSQL</b><span>pgx · 기본 포트 5432</span></label>
+            <label class="engine-card" data-engine="mysql"><input type="radio" name="dbtype" value="mysql"><b>🐬 MySQL</b><span>go-sql-driver/mysql · 3306</span></label>
+            <label class="engine-card" data-engine="mariadb"><input type="radio" name="dbtype" value="mariadb"><b>🦭 MariaDB</b><span>MySQL wire protocol · 3306</span></label>
+          </div>
+        </div>
+        <div class="field-section"><h3>2. 기본 접속 정보</h3><p id="engineHelp">PostgreSQL 접속 정보를 입력하세요.</p>
         <div class="cols2">
           <div>
             <label>ID (영문/숫자/._-, 저장 후 변경 불가)</label>
-            <input id="f_id" required pattern="[A-Za-z0-9._-]{1,64}" placeholder="oracle-prod-vip-01">
+            <input id="f_id" required pattern="[A-Za-z0-9._-]{1,64}" placeholder="mysql-prod-readonly">
             <label>이름</label>
-            <input id="f_name" placeholder="운영 Oracle VIP">
+            <input id="f_name" placeholder="운영 MySQL 읽기 전용">
             <label>접속 문자열</label>
-            <input id="f_conn" required placeholder="db-vip.example.com:1521/ORCLPDB1?connect_timeout=5&expire_time=2">
+            <input id="f_conn" required placeholder="db.example.com:5432/appdb">
+            <div class="field-hint" id="connHint">형식: host:port/database 또는 postgres://host:port/database</div>
             <label>사용자 (SELECT 전용 계정)</label>
-            <input id="f_user" required placeholder="APP_READONLY">
+            <input id="f_user" required placeholder="app_readonly">
             <label>비밀번호 참조 (env:변수 | file:경로 | plain:값)</label>
-            <input id="f_pw" required placeholder="env:ORA_PROD_PW">
+            <input id="f_pw" required placeholder="env:DB_PASSWORD">
+            <div class="field-hint">Docker에서는 env: 변수를 컨테이너 environment로 전달하고, file: 경로는 컨테이너에 마운트해야 합니다.</div>
           </div>
           <div>
             <label>커넥션 풀</label>
@@ -130,11 +151,13 @@
             </select>
           </div>
         </div>
-        <div class="toolbar">
-          <button class="btn primary" type="submit">💾 저장</button>
-          <button class="btn" type="button" onclick="closeForm()">취소</button>
-          <span class="mini">저장 시 이전 db_profiles.json이 자동 백업되고 풀이 재생성됩니다.</span>
         </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">저장하고 연결 테스트</button>
+          <button class="btn" type="button" onclick="closeForm()">취소</button>
+          <span class="mini">저장 후 실제 DB에 Ping하여 실패 단계와 해결 방법을 표시합니다.</span>
+        </div>
+       </div>
       </form>
       <div id="formResult" class="result"></div>
     </div>
@@ -240,8 +263,8 @@ async function refreshProfiles() {
   const data = await api('GET', '/api/db-profiles');
   PROFILES = data.profiles || [];
   $('#driverChip').innerHTML = data.driver_available
-    ? '<span class="chip">드라이버: godror 사용 가능</span>'
-    : '<span class="chip err" title="' + esc(data.driver_note) + '">드라이버 없음 — 실행 불가 (-tags oracle 빌드 필요)</span>';
+    ? '<span class="chip" title="' + esc(data.driver_note) + '">드라이버: PostgreSQL · MySQL · MariaDB 포함</span>'
+    : '<span class="chip err" title="' + esc(data.driver_note) + '">DB 드라이버 없음 — 실행 불가</span>';
   $('#pRows').innerHTML = PROFILES.length === 0
     ? '<tr><td colspan="6" class="mini">등록된 프로파일이 없습니다 — [＋ 프로파일 추가]로 시작하세요.</td></tr>'
     : renderProfileGroups(PROFILES);
@@ -295,7 +318,9 @@ async function testProfile(id) {
     const r = await api('POST', '/api/db-profiles/' + encodeURIComponent(id) + '/test');
     cell.innerHTML = r.ok
       ? '<span class="b ok">정상 ' + r.elapsed_ms + 'ms</span>'
-      : '<span class="b bad" title="' + esc(r.error) + '">실패 ' + esc(r.error_code || '') + '</span><div class="mini">' + esc((r.error || '').slice(0, 120)) + '</div>';
+      : '<span class="b bad" title="' + esc(r.error) + '">실패 · ' + esc(r.category || r.error_code || 'unknown') + '</span>'+
+        '<div class="diagnostic"><b>' + esc(r.hint || r.error || '연결에 실패했습니다.') + '</b><span class="mini">코드 ' + esc(r.error_code || '-') + ' · ' + esc((r.error || '').slice(0,180)) + '</span>'+
+        ((r.next_steps||[]).length?'<ul class="mini">'+r.next_steps.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')+'</div>';
   } catch (e) { cell.innerHTML = '<span class="b bad">오류</span><div class="mini">' + esc(e.message) + '</div>'; }
 }
 function openForm(id) {
@@ -304,12 +329,13 @@ function openForm(id) {
   $('#formTitle').textContent = id ? '프로파일 수정: ' + id : '프로파일 추가';
   $('#formResult').className = 'result';
   const p = PROFILES.find(x => x.id === id) || { pool: {}, policy: {} };
+  setEngine(p.type || 'postgres');
   $('#f_id').value = p.id || ''; $('#f_id').disabled = !!id;
   $('#f_name').value = p.name || '';
   $('#f_conn').value = p.connect_string || '';
   $('#f_user').value = p.username || '';
   $('#f_pw').value = id ? (p.password_ref.startsWith('plain:') ? '' : p.password_ref) : '';
-  $('#f_pw').placeholder = id && p.password_ref.startsWith('plain:') ? '변경하려면 새 값 입력 (plain:****)' : 'env:ORA_PROD_PW';
+  $('#f_pw').placeholder = id && p.password_ref.startsWith('plain:') ? '변경하려면 새 값 입력 (plain:****)' : 'env:DB_PASSWORD';
   $('#f_maxopen').value = p.pool.max_open_conns || '';
   $('#f_maxidle').value = p.pool.max_idle_conns || '';
   $('#f_lifetime').value = p.pool.conn_max_lifetime_seconds || '';
@@ -331,11 +357,23 @@ function openForm(id) {
   window.scrollTo({ top: $('#formWrap').offsetTop - 80, behavior: 'smooth' });
 }
 function closeForm() { $('#formWrap').style.display = 'none'; EDIT_ID = null; }
+const engineCopy={
+  postgres:{help:'PostgreSQL · pgx 드라이버가 내장되어 있습니다.',conn:'db.example.com:5432/appdb',hint:'형식: host:port/database 또는 postgres://host:port/database'},
+  mysql:{help:'MySQL · 순수 Go 드라이버가 바이너리에 포함되어 별도 client library가 필요 없습니다.',conn:'mysql.example.com:3306/appdb',hint:'형식: host:port/database 또는 mysql://host:port/database'},
+  mariadb:{help:'MariaDB · MySQL wire protocol 드라이버가 바이너리에 포함되어 별도 client library가 필요 없습니다.',conn:'mariadb.example.com:3306/appdb',hint:'형식: host:port/database 또는 mariadb://host:port/database'}
+};
+function setEngine(type){
+  if(!engineCopy[type])type='postgres';
+  document.querySelectorAll('.engine-card').forEach(c=>{const on=c.dataset.engine===type;c.classList.toggle('selected',on);c.querySelector('input').checked=on;});
+  $('#engineHelp').textContent=engineCopy[type].help;$('#f_conn').placeholder=engineCopy[type].conn;$('#connHint').textContent=engineCopy[type].hint;
+}
+document.querySelectorAll('.engine-card').forEach(c=>c.addEventListener('click',()=>setEngine(c.dataset.engine)));
 async function saveProfile(ev) {
   ev.preventDefault();
   const num = id => { const v = $(id).value.trim(); return v ? Number(v) : 0; };
   const body = {
     id: $('#f_id').value.trim(), name: $('#f_name').value.trim(),
+    type: document.querySelector('input[name="dbtype"]:checked').value,
     connect_string: $('#f_conn').value.trim(), username: $('#f_user').value.trim(),
     password_ref: $('#f_pw').value.trim(),
     pool: { max_open_conns: num('#f_maxopen'), max_idle_conns: num('#f_maxidle'),
@@ -364,10 +402,10 @@ async function saveProfile(ev) {
   try {
     if (EDIT_ID) await api('PUT', '/api/db-profiles/' + encodeURIComponent(EDIT_ID), JSON.stringify(body));
     else await api('POST', '/api/db-profiles', JSON.stringify(body));
-    showForm('ok', '✅ 저장 완료 — 커넥션 풀이 재생성되었습니다. [접속 테스트]로 확인하세요.');
-    toast('프로파일 저장: ' + body.id);
     await refreshProfiles();
-    if (!EDIT_ID) closeForm();
+    const tested=await api('POST','/api/db-profiles/'+encodeURIComponent(body.id)+'/test');
+    if(tested.ok){showForm('ok','✅ 저장 및 연결 테스트 성공 · '+tested.elapsed_ms+'ms\n엔진: '+body.type+' · 프로파일: '+body.id);toast('프로파일 저장 및 연결 확인 완료');setTimeout(closeForm,1200);}
+    else {showForm('bad','프로파일은 저장했지만 연결하지 못했습니다.\n\n['+(tested.category||tested.error_code||'연결 오류')+'] '+(tested.hint||tested.error)+'\n'+(tested.next_steps||[]).map((x,i)=>(i+1)+'. '+x).join('\n')+'\n\n상세: '+(tested.error||''));toast('저장됨 · 연결 설정을 확인하세요',5000);}
   } catch (e) { showForm('bad', '✘ 저장 실패: ' + e.message); }
   return false;
 }
