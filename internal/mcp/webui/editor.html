@@ -28,6 +28,15 @@
   .btn.danger:hover { background:var(--red-soft); }
   .btn:disabled { opacity:.4; cursor:not-allowed; }
   main { max-width:1700px; margin:0 auto; padding:14px 20px 80px; }
+  .hero { display:grid; grid-template-columns:1fr auto; gap:20px; align-items:center; padding:20px 22px;
+    background:linear-gradient(135deg,#fff 45%,#edf3ff); }
+  .hero h2 { margin:0 0 5px; font-size:20px; } .hero p { margin:0; color:var(--sub); }
+  .steps { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .step { padding:7px 11px; border:1px solid var(--line); border-radius:20px; color:var(--sub); background:#fff; font-size:12px; }
+  .step.on { border-color:#9db9f6; background:var(--blue-soft); color:var(--blue); font-weight:700; }
+  .dataset-info { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:10px; margin-top:12px; }
+  .metric { border:1px solid var(--line); border-radius:9px; padding:9px 12px; background:#fbfcfe; }
+  .metric span { display:block; color:var(--sub); font-size:11px; } .metric b { font-size:14px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
   details.guide > summary { cursor:pointer; font-weight:700; }
   details.guide ul { margin:8px 0 2px; padding-left:20px; color:var(--sub); font-size:13px; }
@@ -35,6 +44,8 @@
   .dirty { display:none; background:var(--amber-soft); color:var(--amber); border:1px solid #f0ddb5;
            border-radius:8px; padding:8px 14px; margin-bottom:12px; font-size:13px; }
   .dirty.show { display:block; }
+  .savebar .toolbar { position:sticky; top:58px; z-index:12; background:var(--card); padding:10px 0;
+    box-shadow:0 8px 14px -12px rgba(15,23,42,.45); }
   .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
   .toolbar input[type=search] { border:1px solid var(--line); border-radius:7px; padding:6px 10px; min-width:240px; }
   .toolbar .mini { color:var(--sub); font-size:12.5px; }
@@ -70,6 +81,7 @@
   .empty { color:var(--sub); text-align:center; padding:50px 0; }
   #toast { position:fixed; right:18px; bottom:18px; background:#101a2e; color:#e8eefc; border-radius:10px;
     padding:12px 18px; font-size:13px; display:none; max-width:480px; z-index:50; box-shadow:0 6px 24px rgba(0,0,0,.25); }
+  @media(max-width:760px){ main{padding:10px 10px 70px}.hero{grid-template-columns:1fr}.steps{justify-content:flex-start}.dataset-info{grid-template-columns:1fr 1fr}header select{min-width:150px;flex:1}.savebar .toolbar{top:104px}.toolbar input[type=search]{min-width:100%;order:9} }
 </style>
 </head>
 <body>
@@ -83,13 +95,18 @@
 </header>
 
 <main>
+  <div class="card hero">
+    <div><h2>안전하게 확인하고, 표에서 바로 편집하세요</h2><p>데이터셋 선택 → 구조 확인 → 행·컬럼 편집 → 검증 및 백업 저장 순서로 진행합니다.</p></div>
+    <div class="steps"><span class="step on" id="step1">1 데이터셋 선택</span><span class="step" id="step2">2 내용 편집</span><span class="step" id="step3">3 저장·반영</span></div>
+  </div>
   <div class="card">
     <div class="schemabox" id="schemaBox" style="display:none"></div>
+    <div class="dataset-info" id="datasetInfo" style="display:none"></div>
   </div>
 
   <div class="dirty" id="dirtyBar">⚠ 저장되지 않은 변경이 있습니다 — <b id="dirtyCount"></b>. [💾 저장]을 눌러 반영하거나 [다시 불러오기]로 취소하세요.</div>
 
-  <div class="card" id="gridCard">
+  <div class="card savebar" id="gridCard">
     <div class="toolbar">
       <button class="btn primary" id="saveBtn" onclick="save()" disabled>💾 저장 (백업 후 반영)</button>
       <button class="btn" id="addRowBtn" onclick="addRow()" disabled>＋ 행 추가</button>
@@ -137,8 +154,11 @@ window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); 
 
 /* ---------- init: dataset list ---------- */
 async function initDatasets() {
-  const data = await (await fetch('/api/datasets')).json();
-  REGISTRY = data.datasets;
+  try {
+    const res = await fetch('/api/datasets', { headers: headers(false) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+    REGISTRY = data.datasets || [];
   const sel = $('#dsSelect');
   REGISTRY.filter(d => d.editable && !EXCLUDE.has(d.name) && (d.format === 'json-array' || d.name === 'glossary'))
     .forEach(d => {
@@ -149,7 +169,11 @@ async function initDatasets() {
     });
   const want = new URLSearchParams(location.search).get('ds');
   if (want) { sel.value = want; if (sel.value === want) loadDataset(); }
+  } catch (e) {
+    showResult('bad', '데이터셋 목록을 불러오지 못했습니다: ' + e.message + '\n관리 토큰과 서버 상태를 확인하세요.');
+  }
 }
+$('#dsSelect').addEventListener('change', () => { if ($('#dsSelect').value) loadDataset(); });
 
 /* ---------- load ---------- */
 async function loadDataset() {
@@ -158,11 +182,15 @@ async function loadDataset() {
   if (dirty && !confirm('저장되지 않은 변경 ' + dirty + '건이 사라집니다. 계속할까요?')) return;
   DS = REGISTRY.find(d => d.name === name);
   const r = await fetch('/api/datasets/' + encodeURIComponent(name) + '/content', { headers: headers(false) });
-  let data = [];
-  if (r.status === 200) {
-    const parsed = JSON.parse(await r.text());
-    data = (name === 'glossary') ? (parsed.entries || []) : parsed;
+  if (r.status === 204) { showResult('info', '아직 파일이 없습니다. 빈 표에서 행을 추가해 새 데이터셋을 만들 수 있습니다.'); }
+  else if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    showResult('bad', '불러오기 실패: ' + (err.error || 'HTTP ' + r.status) + '\n빈 데이터로 대체하지 않았습니다. 관리 토큰과 파일 상태를 확인하세요.');
+    DS = null; ROWS = []; COLS = []; updateDirty(); render(); return;
   }
+  let parsed = [];
+  if (r.status === 200) { try { parsed = JSON.parse(await r.text()); } catch (e) { showResult('bad', 'JSON 해석 실패: ' + e.message); DS=null; updateDirty(); return; } }
+  const data = (name === 'glossary') ? (parsed.entries || []) : parsed;
   if (!Array.isArray(data)) { alert('이 데이터셋은 배열 형태가 아니라 표로 편집할 수 없습니다.'); return; }
   ROWS = data.map(row => ({ ...row }));
   COLS = deriveColumns(ROWS);
@@ -170,7 +198,10 @@ async function loadDataset() {
   $('#search').value = '';
   $('#schemaBox').style.display = 'block';
   $('#schemaBox').textContent = '기대 스키마: ' + DS.schema + '\n사용 기능: ' + DS.used_by.join(', ');
-  ['saveBtn','addRowBtn','addColBtn','revertBtn'].forEach(id => $('#'+id).disabled = false);
+  ['addRowBtn','addColBtn','revertBtn'].forEach(id => $('#'+id).disabled = false);
+  $('#datasetInfo').style.display = 'grid';
+  $('#datasetInfo').innerHTML = '<div class="metric"><span>데이터셋</span><b>'+esc(DS.name)+'</b></div><div class="metric"><span>현재 크기</span><b>'+ROWS.length+'행</b></div><div class="metric"><span>컬럼</span><b>'+COLS.length+'개</b></div><div class="metric"><span>적용 방식</span><b>백업 후 핫스왑</b></div>';
+  $('#step1').classList.remove('on'); $('#step2').classList.add('on');
   hideResult(); updateDirty(); render();
   toast(name + ' 로드: ' + ROWS.length + '행, ' + COLS.length + '컬럼');
 }
@@ -262,8 +293,8 @@ function parseCell(text) {
   if (t === 'true') return true;
   if (t === 'false') return false;
   if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
-  if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']')) || (t.startsWith('"') && t.endsWith('"'))) {
-    try { return JSON.parse(t); } catch { return text; }
+  if (/^[\[{\"]/.test(t)) {
+    try { return JSON.parse(t); } catch (e) { throw new Error('객체·배열·문자열 JSON 형식이 올바르지 않습니다: ' + e.message); }
   }
   return text;
 }
@@ -272,7 +303,8 @@ function commitEdit(td, apply) {
   if (!ta) return;
   const ri = +td.dataset.ri, col = td.dataset.col;
   if (apply && ta.value !== td._orig) {
-    const nv = parseCell(ta.value);
+    let nv;
+    try { nv = parseCell(ta.value); } catch (e) { td.classList.add('editing'); ta.focus(); showResult('bad', '셀 입력 오류: ' + e.message + '\nJSON 값은 괄호와 따옴표를 확인하세요. Esc를 누르면 취소합니다.'); return false; }
     if (nv === undefined) delete ROWS[ri][col]; else ROWS[ri][col] = nv;
     dirty++; updateDirty();
     td.classList.add('changed');
@@ -281,6 +313,7 @@ function commitEdit(td, apply) {
   td.outerHTML = renderCell(ri, col);
   const fresh = document.querySelector('td.cell[data-ri="' + ri + '"][data-col="' + CSS.escape(col) + '"]');
   if (fresh) { if (apply && ta.value !== td._orig) fresh.classList.add('changed'); fresh.addEventListener('click', () => beginEdit(fresh)); }
+  return true;
 }
 
 /* ---------- row ops ---------- */
@@ -336,7 +369,7 @@ function serialize() {
   return DS.name === 'glossary' ? JSON.stringify({ entries: out }) : JSON.stringify(out);
 }
 async function save() {
-  document.querySelectorAll('td.cell.editing').forEach(t => commitEdit(t, true));
+  for (const t of [...document.querySelectorAll('td.cell.editing')]) if (commitEdit(t, true) === false) return;
   if (!DS) return;
   if (!confirm('[' + DS.name + '] 데이터셋을 표의 현재 내용(' + ROWS.length + '행)으로 저장합니다.\n\n· 기존 파일은 backups/에 백업됩니다\n· 카탈로그가 재컴파일되어 즉시 반영됩니다\n· 문제가 있으면 자동 롤백됩니다\n\n계속할까요?')) return;
   try {
@@ -350,6 +383,7 @@ async function save() {
       el.className = 'result ok';
       el.textContent = '✅ 저장 완료 — 카탈로그 핫스왑됨 (재기동 불필요)\n백업: ' + (data.backup || '(신규 파일)');
       dirty = 0; updateDirty();
+      $('#step2').classList.remove('on'); $('#step3').classList.add('on');
       ROWS.forEach(r => delete r.__new);
       document.querySelectorAll('td.cell.changed').forEach(t => t.classList.remove('changed'));
       render();
@@ -367,9 +401,14 @@ async function save() {
 }
 function updateDirty() {
   $('#dirtyBar').classList.toggle('show', dirty > 0);
-  $('#dirtyCount').textContent = '변경 ' + dirty + '건';
+  $('#dirtyCount').textContent = '변경 작업 ' + dirty + '건';
+  $('#saveBtn').disabled = !DS || dirty === 0;
+  if (dirty > 0) { $('#step3').classList.add('on'); } else { $('#step3').classList.remove('on'); }
 }
 function hideResult() { $('#saveResult').className = 'result'; }
+function showResult(cls, msg) { const el=$('#saveResult'); el.className='result '+cls; el.textContent=msg; }
+
+window.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (!$('#saveBtn').disabled) save(); } });
 
 JASQL.mount({ page: 'editor', onReady() { initDatasets(); } });
 </script>
