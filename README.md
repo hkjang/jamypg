@@ -15,6 +15,54 @@ MCP tools, resources, and prompts. Generated SQL can be executed read-only
 against any of the three target engines through pure-Go drivers — no CGO, no
 client libraries, no build tags.
 
+## Built with Codex and GPT-5.6
+
+JAMYPG was developed through a human-directed AI engineering workflow using OpenAI Codex and GPT-5.6.
+
+### How Codex Was Used
+
+Codex served as the primary implementation agent throughout the project. It was used to:
+
+* Explore and understand the existing Go codebase
+* Implement MCP tools, resources, prompts, and transport behavior
+* Develop metadata catalog, search, and join-graph features
+* Add PostgreSQL, MySQL, and MariaDB connectivity
+* Implement SQL validation and read-only execution guardrails
+* Create REST APIs, administration features, and integration tests
+* Refactor duplicated code and improve error handling
+* Update technical documentation alongside source-code changes
+
+Development was performed iteratively. Each task was defined with explicit goals and constraints, and Codex generated or modified the relevant code. The resulting changes were then reviewed, tested, and refined before being accepted.
+
+### How GPT-5.6 Was Used
+
+GPT-5.6 was used as the architecture, reasoning, and review layer of the development process. It helped with:
+
+* Designing the metadata-grounded NL2SQL architecture
+* Defining safe and explainable SQL-generation workflows
+* Identifying schema-hallucination and incorrect-join risks
+* Designing clarification, validation, and query-execution stages
+* Reviewing MCP client compatibility and session behavior
+* Developing multi-database abstraction strategies
+* Creating test scenarios and evaluation criteria
+* Reviewing security, maintainability, and enterprise-readiness
+* Improving project documentation and presentation materials
+
+GPT-5.6 was particularly useful for reasoning across multiple system concerns at once, including metadata quality, SQL dialect differences, MCP protocol behavior, database security, and LLM reliability.
+
+### Human Oversight
+
+AI-generated changes were not accepted automatically. The project owner remained responsible for:
+
+* Defining product goals and technical requirements
+* Reviewing generated code and architectural decisions
+* Running unit and integration tests
+* Verifying SQL safety rules
+* Evaluating generated queries against expected results
+* Approving the final implementation
+
+This combination allowed Codex to accelerate implementation while GPT-5.6 supported architectural reasoning and systematic review, with human judgment controlling the final result.
+
 **📚 상세 문서**: [docs/README.md](docs/README.md) — 아키텍처, MCP 도구
 레퍼런스(85종), SQL 생성 워크플로, 검증 룰 카탈로그(33종), 데이터셋
 가이드(18종), REST API, DB 커넥터, 운영/평가/보안/개발자 가이드.
