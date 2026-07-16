@@ -26,7 +26,7 @@ func TestREADMEListsEveryRegisteredTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", readmePath, err)
 	}
-	readme := string(contents)
+	readme := strings.ReplaceAll(string(contents), "\r\n", "\n")
 
 	countPattern := regexp.MustCompile(`MCP 도구\s+레퍼런스\((\d+)종\)`)
 	countMatch := countPattern.FindStringSubmatch(readme)

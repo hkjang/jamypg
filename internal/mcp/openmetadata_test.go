@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"jamypg/internal/catalog"
@@ -66,6 +67,9 @@ func TestOMConfigEmptyURLRemovesFile(t *testing.T) {
 }
 
 func TestOMConfigFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping file permission check on Windows")
+	}
 	s := newOMServer(t)
 	if err := s.saveOMConfig("http://h:8585", "t"); err != nil {
 		t.Fatal(err)

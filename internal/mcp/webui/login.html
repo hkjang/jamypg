@@ -30,7 +30,7 @@
 </head>
 <body>
 <div class="card">
-  <h1>🗂 JASQL</h1>
+  <h1>🗂 jamypg</h1>
   <p class="sub">메타데이터 그라운딩 Text2SQL 관리 콘솔</p>
   <form onsubmit="return doLogin(event)">
     <label>아이디</label>
@@ -59,7 +59,7 @@ fetch('/auth/me').then(r => r.json()).then(d => {
   if (!d.auth_enabled) {
     document.getElementById('note').innerHTML =
       '⚠ 이 서버는 <b>단독 모드</b>(메타 DB 미설정)로 동작 중이라 로그인이 비활성입니다.<br>' +
-      '<code>-meta-db</code>(또는 <code>JASQL_META_DB</code>)로 기동하면 인증이 활성화됩니다. ' +
+      '<code>-meta-db</code>(또는 <code>JAMYPG_META_DB</code>)로 기동하면 인증이 활성화됩니다. ' +
       '<a href="/admin">콘솔로 이동</a>';
     document.querySelector('form').style.display = 'none';
     return;

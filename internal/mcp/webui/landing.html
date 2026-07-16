@@ -30,8 +30,8 @@
 </head>
 <body>
 <div class="hero">
-  <h1>🛢️ JASQL</h1>
-  <p>은행 메타데이터에 기반해 자연어 질문을 <b>안전한 읽기 전용 Oracle SQL</b>로 변환하는 Text2SQL MCP 서버입니다.</p>
+  <h1>🛢️ jamypg</h1>
+  <p>메타데이터에 기반해 자연어 질문을 <b>안전한 읽기 전용 SQL(PostgreSQL·MySQL·MariaDB)</b>로 변환하는 Text2SQL MCP 서버입니다.</p>
   <p>아래에서 바로 시작하거나, LLM 클라이언트를 <code>/mcp</code>에 연결하세요.</p>
 </div>
 
@@ -64,7 +64,7 @@
     <div id="modeHint"></div>
   </div>
 
-  <div class="foot" id="foot">JASQL · Text2SQL MCP Server</div>
+  <div class="foot" id="foot">jamypg · Text2SQL MCP Server</div>
 </main>
 
 <script>
@@ -72,7 +72,7 @@
 (async function () {
   try {
     const me = await (await fetch('/auth/me')).json();
-    if (me.version) document.getElementById('foot').textContent = 'JASQL v' + me.version + ' · Text2SQL MCP Server';
+    if (me.version) document.getElementById('foot').textContent = 'jamypg v' + me.version + ' · Text2SQL MCP Server';
     const hint = document.getElementById('modeHint');
     if (!me.auth_enabled) {
       hint.innerHTML = '<div style="margin-top:8px">현재 <b>단독 모드</b>입니다 — 로그인 없이 콘솔에 접근할 수 있습니다. (<code>-meta-db</code>로 인증을 활성화하세요.)</div>';
