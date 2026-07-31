@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JAMYPG | Enterprise Metadata-Grounded NL2SQL MCP Server</title>
+
+  <!-- Primary SEO Meta Tags -->
+  <meta name="title" content="JAMYPG | Enterprise Metadata-Grounded NL2SQL MCP Server">
+  <meta name="description" content="PostgreSQL, MySQL, MariaDB를 위한 메타데이터 기반 NL2SQL MCP 서버. SQL 스키마 환각 및 잘못된 조인을 차단하고 85개 이상의 MCP 도구를 제공하는 순수 Go 기반 엔터프라이즈 AI 데이터베이스 에이전트.">
+  <meta name="keywords" content="JAMYPG, NL2SQL, MCP, Model Context Protocol, PostgreSQL, MySQL, MariaDB, Text to SQL, Go, Database AI Agent, OpenMetadata, DBA Copilot">
+  <meta name="author" content="HKJang / JAMYPG Project">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0b0f19">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hkjang.github.io/jamypg/">
+  <meta property="og:title" content="JAMYPG NL2SQL MCP Server — Zero Hallucination AI Database Engine">
+  <meta property="og:description" content="Meta-compiled catalog, strict SQL guardrails, 85+ MCP tools for PostgreSQL, MySQL, and MariaDB. Pure Go multi-engine NL2SQL server.">
+  <meta property="og:image" content="https://hkjang.github.io/jamypg/assets/logo-transparent.png">
+  <meta property="og:site_name" content="JAMYPG NL2SQL MCP">
+  <meta property="og:locale" content="ko_KR">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="https://hkjang.github.io/jamypg/">
+  <meta name="twitter:title" content="JAMYPG NL2SQL MCP Server">
+  <meta name="twitter:description" content="Metadata-Grounded NL2SQL engine over PostgreSQL, MySQL, MariaDB. Zero SQL hallucination, 85+ MCP tools.">
+  <meta name="twitter:image" content="https://hkjang.github.io/jamypg/assets/logo-transparent.png">
+
+  <!-- Canonical URL -->
+  <link rel="canonical" href="https://hkjang.github.io/jamypg/">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="assets/style.css">
+
+  <!-- AEO (Answer Engine Optimization) & SEO Structured Data (JSON-LD) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "JAMYPG NL2SQL MCP Server",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, Windows, macOS",
+    "programmingLanguage": "Go",
+    "softwareVersion": "v0.58.0",
+    "description": "Go-based Model Context Protocol (MCP) server for metadata-grounded Natural Language to SQL (NL2SQL) over PostgreSQL, MySQL, and MariaDB.",
+    "url": "https://hkjang.github.io/jamypg/",
+    "downloadUrl": "https://github.com/hkjang/jamypg/releases",
+    "author": {
+      "@type": "Organization",
+      "name": "JAMYPG Open Source Team",
+      "url": "https://github.com/hkjang/jamypg",
+      "email": "gagagiga@naver.com"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "featureList": [
+      "Metadata-grounded NL2SQL catalog compilation",
+      "Join graph search and skeleton SQL builder",
+      "85+ MCP tools for AI agents",
+      "PostgreSQL, MySQL, and MariaDB pure-Go read-only drivers",
+      "Self-healing feedback loop with learned rules",
+      "Built-in Web Admin Console, REST API and DBA Copilot",
+      "Bi-directional OpenMetadata synchronization"
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "JAMYPG는 기존 NL2SQL 프롬프트 방식과 무엇이 다른가요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "JAMYPG는 단순 프롬프트에 DDL을 넣는 대신, 스키마, 논리명, 지표사전, 조인 그래프, 컬럼 통계를 인메모리 카탈로그로 컴파일합니다. LLM이 직접 SQL 구조를 추측하지 않고 서버의 build_sql_skeleton 및 validate_sql 검증을 거쳐 환각(Hallucination)과 잘못된 조인을 100% 방지합니다."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "JAMYPG가 지원하는 데이터베이스 엔진은 무엇인가요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "PostgreSQL(pgx 드라이버), MySQL 8.x(go-sql-driver), MariaDB 10.x/11.x를 지원하며, 모든 드라이버는 CGO 없이 순수 Go로 컴파일되어 있습니다. 또한 세션 레벨에서 default_transaction_read_only=on, transaction_read_only=1, tx_read_only=1 옵션을 가해 강제로 읽기전용 실행을 보장합니다."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "MCP(Model Context Protocol) 클라이언트와 어떻게 연결하나요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Claude Desktop, Cursor 등 서브프로세스 기반 클라이언트를 위한 stdio 전송 방식과, 원격 및 로컬 HTTP 통합을 위한 Streamable HTTP 전송 방식을 모두 지원합니다."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "JAMYPG 관련 서비스 및 기술 문의는 어디로 하나요?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "JAMYPG 기술 문의 및 엔터프라이즈 도입 관련 문의는 공식 이메일 gagagiga@naver.com 으로 접수할 수 있습니다."
+        }
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <!-- Sticky Navbar -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="#" class="brand">
+        <img src="assets/logo-transparent.png" alt="JAMYPG Logo" class="brand-logo">
+        <span>JAMYPG <span style="font-size: 0.75rem; color: var(--primary); font-family: var(--font-mono);">NL2SQL MCP</span></span>
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="#features" data-ko="주요 기능" data-en="Features">주요 기능</a></li>
+        <li><a href="#architecture" data-ko="아키텍처" data-en="Architecture">아키텍처</a></li>
+        <li><a href="#databases" data-ko="지원 DB" data-en="Databases">지원 DB</a></li>
+        <li><a href="#mcp-tools" data-ko="MCP 도구" data-en="MCP Tools">MCP 도구</a></li>
+        <li><a href="#quickstart" data-ko="빠른 시작" data-en="Quick Start">빠른 시작</a></li>
+        <li><a href="#faq" data-ko="FAQ" data-en="FAQ">FAQ</a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <!-- Language Switcher (KR default / EN) -->
+        <div class="lang-switcher">
+          <button class="lang-btn active" data-lang="ko">KO</button>
+          <button class="lang-btn" data-lang="en">EN</button>
+        </div>
+
+        <a href="https://github.com/hkjang/jamypg" target="_blank" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.875rem;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <header class="hero container">
+    <div class="hero-badge">
+      <span class="pulse-dot"></span>
+      <span data-ko="v0.58.0 출시 • Multi-DB NL2SQL MCP 엔진" data-en="v0.58.0 Released • Multi-DB NL2SQL MCP Engine">v0.58.0 출시 • Multi-DB NL2SQL MCP 엔진</span>
+    </div>
+
+    <h1 class="hero-title" 
+        data-ko="메타데이터 기반의 완벽한 AI Natural Language to SQL" 
+        data-en="Metadata-Grounded NL2SQL Engine for Enterprise AI">
+      메타데이터 기반의 완벽한<br><span class="gradient-text">AI Natural Language to SQL</span>
+    </h1>
+
+    <p class="hero-subtitle"
+       data-ko="PostgreSQL, MySQL, MariaDB를 완벽 지원하는 순수 Go 기반 NL2SQL MCP 서버. 스키마 환각 0%, 85개 이상의 MCP 도구, 읽기 전용 보안 쿼리 실행으로 AI 데이터 분석을 완성합니다."
+       data-en="Pure Go-based NL2SQL MCP server supporting PostgreSQL, MySQL, and MariaDB. Zero schema hallucination, 85+ MCP tools, and safe read-only execution for enterprise AI data analytics.">
+      PostgreSQL, MySQL, MariaDB를 완벽 지원하는 순수 Go 기반 NL2SQL MCP 서버. 스키마 환각 0%, 85개 이상의 MCP 도구, 읽기 전용 보안 쿼리 실행으로 AI 데이터 분석을 완성합니다.
+    </p>
+
+    <div class="hero-ctas">
+      <a href="#quickstart" class="btn btn-primary" data-ko="🚀 빠른 시작하기" data-en="🚀 Quick Start Guide">🚀 빠른 시작하기</a>
+      <a href="https://github.com/hkjang/jamypg/blob/main/docs/README.md" target="_blank" class="btn btn-secondary" data-ko="📚 상세 문서 보기" data-en="📚 Read Documentation">📚 상세 문서 보기</a>
+    </div>
+
+    <!-- Interactive Workflow Simulator Terminal -->
+    <div class="simulator-card">
+      <div class="simulator-header">
+        <div class="window-dots">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+        </div>
+        <div class="simulator-tabs">
+          <button class="sim-tab active" data-step="1">1. prepare_sql_context</button>
+          <button class="sim-tab" data-step="2">2. validate_sql</button>
+          <button class="sim-tab" data-step="3">3. run_sql_safely</button>
+        </div>
+      </div>
+
+      <div class="simulator-body">
+        <!-- Step 1 -->
+        <div class="sim-step active" id="sim-1">
+          <p class="code-comment">// [Input] 자연어 질문 전달</p>
+          <p><span class="code-func">prepare_sql_context</span>({</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"question"</span>: <span class="code-string">"최근 6개월간 신용카드 결제 건수가 가장 높은 고객 Top 5"</span></p>
+          <p>})</p>
+          <br>
+          <p class="code-comment">// [Response] 메타 카탈로그 검색, 지표 매칭, 조인 그래프 및 SQL 골격 자동 생성</p>
+          <p>{</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"status"</span>: <span class="code-string">"ready"</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"selected_tables"</span>: [<span class="code-string">"customers"</span>, <span class="code-string">"payments"</span>],</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"join_condition"</span>: <span class="code-string">"customers.customer_id = payments.customer_id"</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"skeleton_sql"</span>: <span class="code-string">"SELECT c.customer_name, COUNT(p.payment_id) AS pay_cnt FROM customers c JOIN payments p ON c.customer_id = p.customer_id WHERE p.created_at >= NOW() - INTERVAL '6 months' GROUP BY c.customer_name ORDER BY pay_cnt DESC LIMIT 5"</span></p>
+          <p>}</p>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="sim-step" id="sim-2">
+          <p class="code-comment">// [Input] 방언 파서 & 카탈로그 기반 정적 SQL 검증</p>
+          <p><span class="code-func">validate_sql</span>({</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"sql"</span>: <span class="code-string">"SELECT c.customer_name, COUNT(p.payment_id) ..."</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"profile"</span>: <span class="code-string">"postgres-prod"</span></p>
+          <p>})</p>
+          <br>
+          <p class="code-comment">// [Response] 컬럼/조인/방언/PII 검증 통과 (Valid)</p>
+          <p>{</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"valid"</span>: <span class="code-keyword">true</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"dialect"</span>: <span class="code-string">"postgres"</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"pii_detected"</span>: <span class="code-keyword">false</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"risk_level"</span>: <span class="code-string">"low"</span></p>
+          <p>}</p>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="sim-step" id="sim-3">
+          <p class="code-comment">// [Input] Read-Only 세션 안전 실행 (Timeout & Row Limit 적용)</p>
+          <p><span class="code-func">run_sql_safely</span>({</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"profile"</span>: <span class="code-string">"auto"</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"sql"</span>: <span class="code-string">"SELECT c.customer_name, COUNT(p.payment_id) ..."</span></p>
+          <p>})</p>
+          <br>
+          <p class="code-comment">// [Response] 안전한 데이터 조회 결과 반환</p>
+          <p>{</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"executed"</span>: <span class="code-keyword">true</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"row_count"</span>: <span class="code-number">5</span>,</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"columns"</span>: [<span class="code-string">"customer_name"</span>, <span class="code-string">"pay_cnt"</span>],</p>
+          <p>&nbsp;&nbsp;<span class="code-key">"elapsed_ms"</span>: <span class="code-number">14</span></p>
+          <p>}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+      <div class="stat-item">
+        <div class="stat-number">85+</div>
+        <div class="stat-label" data-ko="MCP 도구 & 프로토콜 API" data-en="MCP Tools & Protocol APIs">MCP 도구 & 프로토콜 API</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">3 Target</div>
+        <div class="stat-label" data-ko="Postgres • MySQL • MariaDB" data-en="Postgres • MySQL • MariaDB">Postgres • MySQL • MariaDB</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">0%</div>
+        <div class="stat-label" data-ko="SQL 스키마 환각율" data-en="SQL Schema Hallucination">SQL 스키마 환각율</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">Pure Go</div>
+        <div class="stat-label" data-ko="CGO 미사용 단일 바이너리" data-en="No CGO Single Binary">CGO 미사용 단일 바이너리</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Key Features Grid -->
+  <section id="features" class="section container">
+    <div class="section-header">
+      <span class="section-tag" data-ko="핵심 강점" data-en="Key Features">핵심 강점</span>
+      <h2 class="section-title" data-ko="왜 JAMYPG NL2SQL MCP인가?" data-en="Why Choose JAMYPG NL2SQL MCP?">왜 JAMYPG NL2SQL MCP인가?</h2>
+      <p class="section-desc" data-ko="대규모 엔터프라이즈 환경에서 AI가 안전하고 정확하게 데이터베이스를 탐색하고 쿼리할 수 있도록 설계된 독보적 솔루션입니다." data-en="Architected specifically for enterprise AI to navigate and query complex databases accurately and safely.">대규모 엔터프라이즈 환경에서 AI가 안전하고 정확하게 데이터베이스를 탐색하고 쿼리할 수 있도록 설계된 독보적 솔루션입니다.</p>
+    </div>
+
+    <div class="features-grid">
+      <!-- 01 -->
+      <div class="feature-card">
+        <div class="feature-icon">🛡️</div>
+        <h3 class="feature-title" data-ko="01. 스키마 환각 0% 보장" data-en="01. Zero SQL Hallucination">01. 스키마 환각 0% 보장</h3>
+        <p class="feature-desc" data-ko="메타데이터를 인메모리 카탈로그, 지표 사전, 조인 그래프로 미리 컴파일합니다. LLM이 존재하지 않는 테이블이나 컬럼을 추측해 쿼리를 생성하는 문제를 근본적으로 방지합니다." data-en="Compiles metadata into in-memory catalogs, metric dictionaries, and join graphs. Prevents LLMs from guessing non-existent tables or invalid column names.">
+          메타데이터를 인메모리 카탈로그, 지표 사전, 조인 그래프로 미리 컴파일합니다. LLM이 존재하지 않는 테이블이나 컬럼을 추측해 쿼리를 생성하는 문제를 근본적으로 방지합니다.
+        </p>
+      </div>
+
+      <!-- 02 -->
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3 class="feature-title" data-ko="02. Pure Go 멀티 DB 엔진" data-en="02. Pure Go Multi-DB Engine">02. Pure Go 멀티 DB 엔진</h3>
+        <p class="feature-desc" data-ko="PostgreSQL(pgx/v5), MySQL 8.x, MariaDB 10/11을 CGO나 클라이언트 라이브러리 없이 순수 Go 드라이버로 지원하며, 세션 수준 Read-Only 옵션을 강제 적용합니다." data-en="Native Go drivers for PostgreSQL, MySQL 8.x, and MariaDB. Cross-compiles into a single binary without CGO, featuring session-level read-only safety.">
+          PostgreSQL(pgx/v5), MySQL 8.x, MariaDB 10/11을 CGO나 클라이언트 라이브러리 없이 순수 Go 드라이버로 지원하며, 세션 수준 Read-Only 옵션을 강제 적용합니다.
+        </p>
+      </div>
+
+      <!-- 03 -->
+      <div class="feature-card">
+        <div class="feature-icon">🛠️</div>
+        <h3 class="feature-title" data-ko="03. 85개 이상의 MCP 도구" data-en="03. 85+ Comprehensive MCP Tools">03. 85개 이상의 MCP 도구</h3>
+        <p class="feature-desc" data-ko="prepare_sql_context를 포함한 NL2SQL 파프라인부터 DBA 헬스 점검(db_health_report), 인덱스 추천(suggest_indexes), 워크로드 집계(workload_report)까지 폭넓은 도구를 제공합니다." data-en="From core NL2SQL workflow helpers to automated DBA health diagnostics, index suggestions, and workload analytics, fully accessible to AI agents.">
+          prepare_sql_context를 포함한 NL2SQL 파프라인부터 DBA 헬스 점검(db_health_report), 인덱스 추천(suggest_indexes), 워크로드 집계(workload_report)까지 폭넓은 도구를 제공합니다.
+        </p>
+      </div>
+
+      <!-- 04 -->
+      <div class="feature-card">
+        <div class="feature-icon">🔄</div>
+        <h3 class="feature-title" data-ko="04. Self-Healing 피드백 루프" data-en="04. Self-Healing Feedback Loop">04. Self-Healing 피드백 루프</h3>
+        <p class="feature-desc" data-ko="반복되는 쿼리 실패 패턴 및 교정 이력을 감지하여 learned_rules.json으로 자동 승격시킵니다. 시스템을 사용할수록 NL2SQL 정확도가 지속적으로 향상됩니다." data-en="Automatically captures recurring execution failures and corrections, promoting them into learned rules to continuously refine NL2SQL precision.">
+          반복되는 쿼리 실패 패턴 및 교정 이력을 감지하여 learned_rules.json으로 자동 승격시킵니다. 시스템을 사용할수록 NL2SQL 정확도가 지속적으로 향상됩니다.
+        </p>
+      </div>
+
+      <!-- 05 -->
+      <div class="feature-card">
+        <div class="feature-icon">🖥️</div>
+        <h3 class="feature-title" data-ko="05. 내장 Web Admin & REST API" data-en="05. Built-in Web Admin & REST">05. 내장 Web Admin & REST API</h3>
+        <p class="feature-desc" data-ko="브라우저에서 데이터셋과 테이블 그리드를 인라인 수정(/admin/editor)하고, DBA 콘솔, DB 연결 관리, Swagger UI (/docs) 및 OpenAPI 3.0 스펙을 즉시 활용할 수 있습니다." data-en="In-browser metadata dataset editor, live DB query runner, DBA copilot console, and built-in Swagger UI with full REST API support.">
+          브라우저에서 데이터셋과 테이블 그리드를 인라인 수정(/admin/editor)하고, DBA 콘솔, DB 연결 관리, Swagger UI (/docs) 및 OpenAPI 3.0 스펙을 즉시 활용할 수 있습니다.
+        </p>
+      </div>
+
+      <!-- 06 -->
+      <div class="feature-card">
+        <div class="feature-icon">🌐</div>
+        <h3 class="feature-title" data-ko="06. OpenMetadata 연동" data-en="06. OpenMetadata Integration">06. OpenMetadata 연동</h3>
+        <p class="feature-desc" data-ko="OpenMetadata와 논리명, 설명, PII 태그, 용어집 및 테이블 Lineage 엣지를 양방향으로 동기화하고 Drift 대조 리포트를 생성하여 메타데이터 거버넌스를 완성합니다." data-en="Bi-directional import/export of metadata descriptions, PII tags, glossaries, and lineage edges with OpenMetadata enterprise governance.">
+          OpenMetadata와 논리명, 설명, PII 태그, 용어집 및 테이블 Lineage 엣지를 양방향으로 동기화하고 Drift 대조 리포트를 생성하여 메타데이터 거버넌스를 완성합니다.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture Section -->
+  <section id="architecture" class="section container">
+    <div class="section-header">
+      <span class="section-tag" data-ko="권장 워크플로" data-en="Recommended Flow">권장 워크플로</span>
+      <h2 class="section-title" data-ko="안전하고 표준화된 NL2SQL 생성 6단계" data-en="Standardized 6-Step NL2SQL Execution">안전하고 표준화된 NL2SQL 생성 6단계</h2>
+      <p class="section-desc" data-ko="LLM이 직접 SQL을 오케스트레이션하지 않고, JAMYPG의 가이던스를 따라 안전하게 처리되는 6단계 프로세스입니다." data-en="A bulletproof execution pipeline that guides LLMs through context assembly, skeleton building, static linting, and safe read-only execution.">LLM이 직접 SQL을 오케스트레이션하지 않고, JAMYPG의 가이던스를 따라 안전하게 처리되는 6단계 프로세스입니다.</p>
+    </div>
+
+    <div class="flow-container">
+      <div class="flow-step">
+        <div class="flow-step-num">1</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title" data-ko="질문 분석 & 컨텍스트 취득" data-en="1. Question Analysis & Context Retrieval">질문 분석 & 컨텍스트 취득</div>
+          <div class="flow-step-desc" data-ko="사용자의 자연어 질문을 분해하여 의도(Intent), 지표, 차원, 시간 범위 및 리터럴 필터 컬럼을 매핑합니다." data-en="Decomposes the user's natural language question into intent, business metrics, dimensions, time ranges, and literal filter column mappings.">사용자의 자연어 질문을 분해하여 의도(Intent), 지표, 차원, 시간 범위 및 리터럴 필터 컬럼을 매핑합니다.</div>
+          <span class="flow-step-code">prepare_sql_context(question)</span>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step-num">2</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title" data-ko="모호성 확인 & 되묻기 (Clarification)" data-en="2. Ambiguity Clarification">모호성 확인 & 되묻기 (Clarification)</div>
+          <div class="flow-step-desc" data-ko="응답 status가 needs_clarification인 경우, 임의로 판단하지 않고 사용자에게 명확한 기준을 되묻습니다." data-en="If status returns 'needs_clarification', prompts the user to resolve ambiguity rather than making blind assumptions.">응답 status가 needs_clarification인 경우, 임의로 판단하지 않고 사용자에게 명확한 기준을 되묻습니다.</div>
+          <span class="flow-step-code">status: "needs_clarification"</span>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step-num">3</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title" data-ko="SQL 골격 조립 (Skeleton Construction)" data-en="3. SQL Skeleton Construction">SQL 골격 조립 (Skeleton Construction)</div>
+          <div class="flow-step-desc" data-ko="조인 그래프, 지표 식, 시간 변환 조건이 적용된 SQL 골격을 생성하며, LLM은 /* SLOT */ 주석 위치만 채웁니다." data-en="Assembles verified SQL skeletons with preset joins and metric expressions. LLM only fills designated /* SLOT */ comments.">조인 그래프, 지표 식, 시간 변환 조건이 적용된 SQL 골격을 생성하며, LLM은 /* SLOT */ 주석 위치만 채웁니다.</div>
+          <span class="flow-step-code">build_sql_skeleton / skeleton_sql</span>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step-num">4</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title" data-ko="정적 검증 & 린팅 (Validation & Linting)" data-en="4. Static Validation & Dialect Linting">정적 검증 & 린팅 (Validation & Linting)</div>
+          <div class="flow-step-desc" data-ko="타겟 DB 방언(postgres/mysql/mariadb) 규칙, GROUP BY 정합성, 카티션 조인 유무, PII 데이터 포함 여부를 다각도로 검증합니다." data-en="Validates target DB dialect rules, GROUP BY validity, Cartesian joins, and PII exposure before any execution attempt.">타겟 DB 방언(postgres/mysql/mariadb) 규칙, GROUP BY 정합성, 카티션 조인 유무, PII 데이터 포함 여부를 다각도로 검증합니다.</div>
+          <span class="flow-step-code">validate_sql(sql, expected_outputs)</span>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step-num">5</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title" data-ko="실행 계획 & 리스크 분석 (Explain & Risk Check)" data-en="5. Explain Plan & Risk Analysis">실행 계획 & 리스크 분석 (Explain & Risk Check)</div>
+          <div class="flow-step-desc" data-ko="실제 DB의 EXPLAIN (FORMAT JSON)을 수행하여 Full Table Scan, 대량 정렬 등 고비용 쿼리 위험을 사전에 차단합니다." data-en="Runs native EXPLAIN (FORMAT JSON) against target DB to detect full table scans and expensive Cartesian joins.">실제 DB의 EXPLAIN (FORMAT JSON)을 수행하여 Full Table Scan, 대량 정렬 등 고비용 쿼리 위험을 사전에 차단합니다.</div>
+          <span class="flow-step-code">explain_sql(sql, profile)</span>
+        </div>
+      </div>
+
+      <div class="flow-step">
+        <div class="flow-step-num">6</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title" data-ko="Read-Only 안전 실행 & 자기 수정" data-en="6. Safe Read-Only Execution & Repair">Read-Only 안전 실행 & 자기 수정</div>
+          <div class="flow-step-desc" data-ko="강제 Read-Only 트랜잭션, 타임아웃, 최대 행 제한 가드 환경에서 실행하고, 오류 발생 시 execute_with_repair로 원턴 교정을 진행합니다." data-en="Executes under read-only session flags with row bounds and timeouts. Automatically invokes execute_with_repair upon error.">강제 Read-Only 트랜잭션, 타임아웃, 최대 행 제한 가드 환경에서 실행하고, 오류 발생 시 execute_with_repair로 원턴 교정을 진행합니다.</div>
+          <span class="flow-step-code">run_sql_safely / execute_with_repair</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Supported Target Databases -->
+  <section id="databases" class="section container">
+    <div class="section-header">
+      <span class="section-tag" data-ko="호환성 & 보안" data-en="Engine Compatibility">호환성 & 보안</span>
+      <h2 class="section-title" data-ko="지원 데이터베이스 & Read-Only 세션 가드" data-en="Supported Database Engines & Security">지원 데이터베이스 & Read-Only 세션 가드</h2>
+      <p class="section-desc" data-ko="별도의 CGO 빌드 환경이나 클라이언트 SDK 설치 없이 바이너리 하나로 주요 3개 관계형 DB를 완벽 지원합니다." data-en="Full zero-dependency pure-Go connectivity with strict session-level read-only guards across all 3 relational engines.">별도의 CGO 빌드 환경이나 클라이언트 SDK 설치 없이 바이너리 하나로 주요 3개 관계형 DB를 완벽 지원합니다.</p>
+    </div>
+
+    <div class="engine-table-card">
+      <table class="engine-table">
+        <thead>
+          <tr>
+            <th data-ko="데이터베이스" data-en="Database">데이터베이스</th>
+            <th data-ko="프로파일 type" data-en="Profile Type">프로파일 type</th>
+            <th data-ko="Go 드라이버" data-en="Go Driver">Go 드라이버</th>
+            <th data-ko="Read-Only 세션 강제" data-en="Read-Only Session Flag">Read-Only 세션 강제</th>
+            <th data-ko="상태" data-en="Status">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>PostgreSQL</strong> (9.6 ~ 16+)</td>
+            <td><code>postgres</code> (기본)</td>
+            <td><code>pgx/v5</code> (pure Go)</td>
+            <td><code>default_transaction_read_only=on</code></td>
+            <td><span class="badge badge-success" data-ko="공식 지원" data-en="Production Ready">공식 지원</span></td>
+          </tr>
+          <tr>
+            <td><strong>MySQL</strong> (8.x)</td>
+            <td><code>mysql</code></td>
+            <td><code>go-sql-driver/mysql</code></td>
+            <td><code>transaction_read_only=1</code></td>
+            <td><span class="badge badge-success" data-ko="공식 지원" data-en="Production Ready">공식 지원</span></td>
+          </tr>
+          <tr>
+            <td><strong>MariaDB</strong> (10.x / 11.x)</td>
+            <td><code>mariadb</code></td>
+            <td><code>go-sql-driver/mysql</code></td>
+            <td><code>tx_read_only=1</code></td>
+            <td><span class="badge badge-success" data-ko="공식 지원" data-en="Production Ready">공식 지원</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Interactive Tool Showcase Section -->
+  <section id="mcp-tools" class="section container">
+    <div class="section-header">
+      <span class="section-tag" data-ko="MCP 스펙" data-en="MCP Toolset">MCP 스펙</span>
+      <h2 class="section-title" data-ko="엔터프라이즈 MCP 도구 카탈로그" data-en="Enterprise MCP Tool Catalog">엔터프라이즈 MCP 도구 카탈로그</h2>
+      <p class="section-desc" data-ko="LLM AI 에이전트가 데이터베이스 탐색, NL2SQL 생성, DBA 진단 및 카탈로그 관리를 수행할 수 있는 85종의 대표 도구입니다." data-en="A curated view of the 85+ high-performance tools exposed to AI agents over stdio and HTTP MCP endpoints.">LLM AI 에이전트가 데이터베이스 탐색, NL2SQL 생성, DBA 진단 및 카탈로그 관리를 수행할 수 있는 85종의 대표 도구입니다.</p>
+    </div>
+
+    <div class="tool-filter-tabs">
+      <button class="tool-tab active" data-category="all" data-ko="전체 (All)" data-en="All Tools">전체 (All)</button>
+      <button class="tool-tab" data-category="nl2sql" data-ko="NL2SQL 핵심" data-en="NL2SQL Core">NL2SQL 핵심</button>
+      <button class="tool-tab" data-category="catalog" data-ko="카탈로그 & 스키마" data-en="Catalog & Schema">카탈로그 & 스키마</button>
+      <button class="tool-tab" data-category="dba" data-ko="DBA & 진단" data-en="DBA & Diagnostics">DBA & 진단</button>
+      <button class="tool-tab" data-category="gov" data-ko="거버넌스 & 동기화" data-en="Governance & Sync">거버넌스 & 동기화</button>
+    </div>
+
+    <div class="tools-grid">
+      <!-- Tool 1 -->
+      <div class="tool-item" data-category="nl2sql">
+        <div>
+          <div class="tool-name">prepare_sql_context</div>
+          <p class="tool-desc" data-ko="질문 분석 → 스키마 검색 → 지표 매칭 → 조인 경로 → SQL 골격을 한 번에 반환하는 권장 메인 진입점." data-en="Recommended main entry point: analyzes question, searches schema, maps metrics, finds joins, and builds SQL skeleton in one step.">
+            질문 분석 → 스키마 검색 → 지표 매칭 → 조인 경로 → SQL 골격을 한 번에 반환하는 권장 메인 진입점.
+          </p>
+        </div>
+        <span class="tool-tag">NL2SQL Core</span>
+      </div>
+
+      <!-- Tool 2 -->
+      <div class="tool-item" data-category="nl2sql">
+        <div>
+          <div class="tool-name">validate_sql</div>
+          <p class="tool-desc" data-ko="Postgres/MySQL/MariaDB 정적 검증, 카티션 조인 감지, PII 노출 탐지 및 2회 자동수정을 위한 fix_hints 생성." data-en="Static dialect validation, Cartesian join detection, PII checks, and structured fix_hints for auto-repair loops.">
+            Postgres/MySQL/MariaDB 정적 검증, 카티션 조인 감지, PII 노출 탐지 및 2회 자동수정을 위한 fix_hints 생성.
+          </p>
+        </div>
+        <span class="tool-tag">NL2SQL Core</span>
+      </div>
+
+      <!-- Tool 3 -->
+      <div class="tool-item" data-category="nl2sql">
+        <div>
+          <div class="tool-name">run_sql_safely</div>
+          <p class="tool-desc" data-ko="Read-Only 세션 환경에서 타임아웃, 최대 행 제한 및 감사 로그를 적용하여 안전하게 DB 쿼리를 실행." data-en="Executes read-only SQL with strict query timeouts, row limits, profile auto-routing, and audit logging.">
+            Read-Only 세션 환경에서 타임아웃, 최대 행 제한 및 감사 로그를 적용하여 안전하게 DB 쿼리를 실행.
+          </p>
+        </div>
+        <span class="tool-tag">NL2SQL Core</span>
+      </div>
+
+      <!-- Tool 4 -->
+      <div class="tool-item" data-category="catalog">
+        <div>
+          <div class="tool-name">search_schema</div>
+          <p class="tool-desc" data-ko="물리/논리명, 용어집, 지표, 과거 성공 쿼리 및 조인 연결성을 종합한 다중 신호 스코어링 검색." data-en="Multi-signal schema search incorporating physical/logical names, glossaries, metrics, and join graph connectivity.">
+            물리/논리명, 용어집, 지표, 과거 성공 쿼리 및 조인 연결성을 종합한 다중 신호 스코어링 검색.
+          </p>
+        </div>
+        <span class="tool-tag">Catalog & Schema</span>
+      </div>
+
+      <!-- Tool 5 -->
+      <div class="tool-item" data-category="catalog">
+        <div>
+          <div class="tool-name">get_join_paths</div>
+          <p class="tool-desc" data-ko="인메모리 조인 그래프를 기반으로 테이블 간 최적 조인 경로, 신뢰도 및 금지 조인 조건을 탐색." data-en="Discovers optimal join paths between tables, confidence levels, and forbidden join rule constraints.">
+            인메모리 조인 그래프를 기반으로 테이블 간 최적 조인 경로, 신뢰도 및 금지 조인 조건을 탐색.
+          </p>
+        </div>
+        <span class="tool-tag">Catalog & Schema</span>
+      </div>
+
+      <!-- Tool 6 -->
+      <div class="tool-item" data-category="dba">
+        <div>
+          <div class="tool-name">db_health_report</div>
+          <p class="tool-desc" data-ko="PK 없는 테이블, 인덱스 없는 FK, 미사용 인덱스, 대형 테이블 코멘트 부재 등 DBA 진단 수행." data-en="Automated DBA health inspection detecting missing PKs, unindexed FKs, unused indexes, and stale statistics.">
+            PK 없는 테이블, 인덱스 없는 FK, 미사용 인덱스, 대형 테이블 코멘트 부재 등 DBA 진단 수행.
+          </p>
+        </div>
+        <span class="tool-tag">DBA & Diagnostics</span>
+      </div>
+
+      <!-- Tool 7 -->
+      <div class="tool-item" data-category="dba">
+        <div>
+          <div class="tool-name">suggest_indexes</div>
+          <p class="tool-desc" data-ko="실제 감사 로그의 느린 쿼리를 분석하여 최적의 CREATE INDEX DDL과 대표 쿼리를 제안." data-en="Analyzes slow query audit logs to recommend high-impact CREATE INDEX DDL statements and workload impact metrics.">
+            실제 감사 로그의 느린 쿼리를 분석하여 최적의 CREATE INDEX DDL과 대표 쿼리를 제안.
+          </p>
+        </div>
+        <span class="tool-tag">DBA & Diagnostics</span>
+      </div>
+
+      <!-- Tool 8 -->
+      <div class="tool-item" data-category="gov">
+        <div>
+          <div class="tool-name">import_openmetadata</div>
+          <p class="tool-desc" data-ko="OpenMetadata의 논리명, 설명, PII 태그, 용어집을 수급하여 JAMYPG 카탈로그에 안전하게 병합." data-en="Imports OpenMetadata curated logical names, descriptions, PII tags, and glossaries into JAMYPG catalogs.">
+            OpenMetadata의 논리명, 설명, PII 태그, 용어집을 수급하여 JAMYPG 카탈로그에 안전하게 병합.
+          </p>
+        </div>
+        <span class="tool-tag">Governance & Sync</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start & Code Snippets -->
+  <section id="quickstart" class="section container">
+    <div class="section-header">
+      <span class="section-tag" data-ko="실행 가이드" data-en="Get Started">실행 가이드</span>
+      <h2 class="section-title" data-ko="원클릭 설치 및 실행 방법" data-en="Quick Start Installation">원클릭 설치 및 실행 방법</h2>
+      <p class="section-desc" data-ko="원하는 환경(로컬 HTTP, Docker, stdio, 통합 테스트)에 맞추어 즉시 JAMYPG를 띄워보세요." data-en="Launch JAMYPG locally, via Docker container, or hook into Claude Desktop / Cursor in seconds.">원하는 환경(로컬 HTTP, Docker, stdio, 통합 테스트)에 맞추어 즉시 JAMYPG를 띄워보세요.</p>
+    </div>
+
+    <div class="code-tab-container">
+      <div class="code-nav">
+        <button class="code-nav-btn active" data-target="code-http">Local HTTP Server</button>
+        <button class="code-nav-btn" data-target="code-docker">Docker Container</button>
+        <button class="code-nav-btn" data-target="code-stdio">Claude Desktop (stdio)</button>
+        <button class="code-nav-btn" data-target="code-test">Integration Test</button>
+      </div>
+
+      <!-- HTTP -->
+      <div class="code-block-wrapper code-content" id="code-http">
+        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <pre><code># 1. 로컬 HTTP MCP 서버 및 Web Admin 기동 (포트 9797)
+go run ./cmd/jamypg-mcp -transport http -data ./data/metadb -addr 127.0.0.1:9797
+
+# 진입점 URL:
+# - MCP Endpoint: http://127.0.0.1:9797/mcp
+# - Web Admin UI: http://127.0.0.1:9797/admin
+# - Swagger UI : http://127.0.0.1:9797/docs
+# - Healthcheck: http://127.0.0.1:9797/healthz</code></pre>
+      </div>
+
+      <!-- Docker -->
+      <div class="code-block-wrapper code-content" id="code-docker" style="display: none;">
+        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <pre><code># Docker 이미지 빌드 및 컨테이너 실행
+docker build -t jamypg-mcp:v0.58.0 .
+
+docker run --rm -p 9797:9797 \
+  -e JAMYPG_ADMIN_TOKEN=your-secure-token \
+  jamypg-mcp:v0.58.0</code></pre>
+      </div>
+
+      <!-- stdio -->
+      <div class="code-block-wrapper code-content" id="code-stdio" style="display: none;">
+        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <pre><code>// claude_desktop_config.json 설정 예시
+{
+  "mcpServers": {
+    "jamypg": {
+      "command": "/path/to/jamypg-mcp-linux-amd64",
+      "args": [
+        "-transport", "stdio",
+        "-data", "/path/to/jamypg/data/metadb"
+      ]
+    }
+  }
+}</code></pre>
+      </div>
+
+      <!-- Test -->
+      <div class="code-block-wrapper code-content" id="code-test" style="display: none;">
+        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <pre><code># 통합 테스트용 DB 3종 (Postgres, MySQL, MariaDB) 띄우기
+docker compose -f deploy/test/docker-compose.yml up -d
+
+# 통합 테스트 수행
+go test -tags integration ./test/integration -v</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Section (AEO & LLM Search Optimized) -->
+  <section id="faq" class="section container">
+    <div class="section-header">
+      <span class="section-tag" data-ko="자주 묻는 질문" data-en="Frequently Asked Questions">자주 묻는 질문</span>
+      <h2 class="section-title" data-ko="궁금한 점을 확인하세요 (FAQ)" data-en="FAQ & Knowledge Base">궁금한 점을 확인하세요 (FAQ)</h2>
+      <p class="section-desc" data-ko="JAMYPG의 동작 방식, 보안 매커니즘, AI 검색 엔진 및 LLM 연동에 관한 명쾌한 답변입니다." data-en="Clear answers regarding architecture, security, read-only enforcement, and LLM integrations.">JAMYPG의 동작 방식, 보안 매커니즘, AI 검색 엔진 및 LLM 연동에 관한 명쾌한 답변입니다.</p>
+    </div>
+
+    <div class="faq-list">
+      <!-- FAQ 1 -->
+      <div class="faq-item">
+        <div class="faq-question" data-ko="Q1. 기존 Text-to-SQL 프롬프트 방식보다 JAMYPG가 뛰어난 이유는 무엇인가요?" data-en="Q1. Why is JAMYPG superior to traditional Text-to-SQL prompting?">
+          Q1. 기존 Text-to-SQL 프롬프트 방식보다 JAMYPG가 뛰어난 이유는 무엇인가요?
+        </div>
+        <div class="faq-answer" 
+             data-ko="단순 프롬프트 방식은 테이블 수십 개만 넘어가도 컨텍스트 길이를 초과하거나 존재하지 않는 테이블/컬럼/조인 관계를 지어내는 환각(Hallucination)이 발생합니다. JAMYPG는 스키마, 논리명, 지표 식, 조인 그래프를 사전 인메모리 카탈로그로 컴파일하여 필요한 압축 컨텍스트만 공급하고, build_sql_skeleton 및 validate_sql 검증을 거쳐 100% 구조적 정합성을 보장합니다."
+             data-en="Raw prompts fail on complex schemas due to context window limits and schema hallucinations. JAMYPG compiles schema metadata, glossaries, metric expressions, and join graphs into an in-memory catalog. It supplies compressed context and verifies SQL structure using build_sql_skeleton and validate_sql, ensuring 100% precision.">
+          단순 프롬프트 방식은 테이블 수십 개만 넘어가도 컨텍스트 길이를 초과하거나 존재하지 않는 테이블/컬럼/조인 관계를 지어내는 환각(Hallucination)이 발생합니다. JAMYPG는 스키마, 논리명, 지표 식, 조인 그래프를 사전 인메모리 카탈로그로 컴파일하여 필요한 압축 컨텍스트만 공급하고, build_sql_skeleton 및 validate_sql 검증을 거쳐 100% 구조적 정합성을 보장합니다.
+        </div>
+      </div>
+
+      <!-- FAQ 2 -->
+      <div class="faq-item">
+        <div class="faq-question" data-ko="Q2. DB 데이터 수정이나 삭제 위험은 전혀 없나요?" data-en="Q2. Is there any risk of database mutation or deletion?">
+          Q2. DB 데이터 수정이나 삭제 위험은 전혀 없나요?
+        </div>
+        <div class="faq-answer"
+             data-ko="네, 전혀 없습니다. run_sql_safely 도구는 postgres/mysql/mariadb 드라이버 연결 시 세션 레벨에서 default_transaction_read_only=on, transaction_read_only=1, tx_read_only=1을 강제 적용합니다. INSERT, UPDATE, DELETE, DROP 등 모든 쓰기 시도는 데이터베이스 엔진 수준에서 완전히 차단됩니다."
+             data-en="Zero risk. The run_sql_safely tool forces session-level read-only flags (default_transaction_read_only=on / transaction_read_only=1) on all PostgreSQL, MySQL, and MariaDB connections. DML or DDL operations are blocked directly by the DB engine.">
+          네, 전혀 없습니다. run_sql_safely 도구는 postgres/mysql/mariadb 드라이버 연결 시 세션 레벨에서 default_transaction_read_only=on, transaction_read_only=1, tx_read_only=1을 강제 적용합니다. INSERT, UPDATE, DELETE, DROP 등 모든 쓰기 시도는 데이터베이스 엔진 수준에서 완전히 차단됩니다.
+        </div>
+      </div>
+
+      <!-- FAQ 3 -->
+      <div class="faq-item">
+        <div class="faq-question" data-ko="Q3. CGO 빌드가 필요 없다는 것은 어떤 의미인가요?" data-en="Q3. What does zero CGO dependency mean for deployment?">
+          Q3. CGO 빌드가 필요 없다는 것은 어떤 의미인가요?
+        </div>
+        <div class="faq-answer"
+             data-ko="과거 오라클 SDK(Instant Client) 등 C 라이브러리 의존성을 완벽히 제거하고 100% 순수 Go 드라이버(pgx, go-sql-driver/mysql)로 교체했습니다. 이로 인해 크로스 컴파일이 매우 용이하며, CGO_ENABLED=0 환경에서 크로스 컴파일된 단일 실행 바이너리 하나만으로 리눅스, 윈도우, macOS 어디서나 즉시 실행 가능합니다."
+             data-en="JAMYPG removes all C-library dynamic client dependencies. Built with 100% pure Go drivers (pgx, go-sql-driver/mysql), it compiles into a standalone binary with CGO_ENABLED=0, deployable on Linux, Windows, or macOS without pre-installed database client drivers.">
+          과거 오라클 SDK(Instant Client) 등 C 라이브러리 의존성을 완벽히 제거하고 100% 순수 Go 드라이버(pgx, go-sql-driver/mysql)로 교체했습니다. 이로 인해 크로스 컴파일이 매우 용이하며, CGO_ENABLED=0 환경에서 크로스 컴파일된 단일 실행 바이너리 하나만으로 리눅스, 윈도우, macOS 어디서나 즉시 실행 가능합니다.
+        </div>
+      </div>
+
+      <!-- FAQ 4 -->
+      <div class="faq-item">
+        <div class="faq-question" data-ko="Q4. OpenMetadata 등 기존 거버넌스 도구와 연동이 가능한가요?" data-en="Q4. Can JAMYPG integrate with enterprise OpenMetadata?">
+          Q4. OpenMetadata 등 기존 거버넌스 도구와 연동이 가능한가요?
+        </div>
+        <div class="faq-answer"
+             data-ko="예, 완벽히 가능합니다. import_openmetadata 및 export_to_openmetadata 도구를 통해 OpenMetadata의 테이블/컬럼 논리명, 설명, PII 태그, 용어집 및 Lineage 정보를 양방향으로 동기화할 수 있으며 openmetadata_drift 리포트로 변경 사항을 감시할 수 있습니다."
+             data-en="Yes. JAMYPG provides built-in tools (import_openmetadata, export_to_openmetadata, export_lineage_to_openmetadata) for bi-directional synchronization of logical names, column descriptions, PII tags, glossaries, and lineage edges with OpenMetadata.">
+          예, 완벽히 가능합니다. import_openmetadata 및 export_to_openmetadata 도구를 통해 OpenMetadata의 테이블/컬럼 논리명, 설명, PII 태그, 용어집 및 Lineage 정보를 양방향으로 동기화할 수 있으며 openmetadata_drift 리포트로 변경 사항을 감시할 수 있습니다.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer & Contact Section -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a href="#" class="brand">
+            <img src="assets/logo-transparent.png" alt="JAMYPG Logo" class="brand-logo">
+            <span>JAMYPG</span>
+          </a>
+          <p data-ko="PostgreSQL, MySQL, MariaDB를 위한 메타데이터 기반 엔터프라이즈 NL2SQL MCP 서버." data-en="Metadata-Grounded Enterprise NL2SQL MCP Server for PostgreSQL, MySQL, and MariaDB.">
+            PostgreSQL, MySQL, MariaDB를 위한 메타데이터 기반 엔터프라이즈 NL2SQL MCP 서버.
+          </p>
+        </div>
+
+        <div>
+          <h4 class="footer-title" data-ko="문서 & 리소스" data-en="Resources">문서 & 리소스</h4>
+          <ul class="footer-links">
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/README.md" target="_blank" data-ko="아키텍처 문서" data-en="Architecture Docs">아키텍처 문서</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/mcp-tools-reference.md" target="_blank" data-ko="MCP 도구 레퍼런스 (85종)" data-en="MCP Tool Reference (85)">MCP 도구 레퍼런스 (85종)</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/db-connector.md" target="_blank" data-ko="DB 커넥터 가이드" data-en="DB Connector Guide">DB 커넥터 가이드</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/rest-api.md" target="_blank" data-ko="REST API 가이드" data-en="REST API Guide">REST API 가이드</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="footer-title" data-ko="기능 & 모듈" data-en="Modules">기능 & 모듈</h4>
+          <ul class="footer-links">
+            <li><a href="#features" data-ko="Zero Hallucination" data-en="Zero Hallucination">Zero Hallucination</a></li>
+            <li><a href="#databases" data-ko="Postgres / MySQL / MariaDB" data-en="Postgres / MySQL / MariaDB">Postgres / MySQL / MariaDB</a></li>
+            <li><a href="#mcp-tools" data-ko="DBA 코파일럿" data-en="DBA Copilot">DBA 코파일럿</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/openmetadata.md" target="_blank" data-ko="OpenMetadata 연동" data-en="OpenMetadata Sync">OpenMetadata 연동</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="footer-title" data-ko="프로젝트" data-en="Project">프로젝트</h4>
+          <ul class="footer-links">
+            <li><a href="https://github.com/hkjang/jamypg" target="_blank">GitHub Repository</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/releases" target="_blank">Releases & Releases</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/LICENSE" target="_blank">License (MIT)</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Bottom Footer Line with Small Contact Mail Request -->
+      <div class="footer-bottom">
+        <div class="copyright">
+          © 2026 JAMYPG Project. Developed with OpenAI Codex & GPT-5.6. All rights reserved.
+        </div>
+
+        <!-- Small Contact Mail Info (specifically requested by user: gagagiga@naver.com) -->
+        <div class="contact-inquiry">
+          <span data-ko="문의:" data-en="Inquiries:">문의:</span>
+          <a href="mailto:gagagiga@naver.com">gagagiga@naver.com</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- App JavaScript -->
+  <script src="assets/app.js"></script>
+</body>
+</html>
