@@ -7,7 +7,7 @@
 
   <!-- Primary SEO Meta Tags -->
   <meta name="title" content="JAMYPG | Enterprise Metadata-Grounded NL2SQL MCP Server">
-  <meta name="description" content="PostgreSQL, MySQL, MariaDB를 위한 메타데이터 기반 NL2SQL MCP 서버. SQL 스키마 환각 및 잘못된 조인을 차단하고 85개 이상의 MCP 도구를 제공하는 순수 Go 기반 엔터프라이즈 AI 데이터베이스 에이전트.">
+  <meta name="description" content="PostgreSQL, MySQL, MariaDB를 위한 메타데이터 기반 NL2SQL MCP 서버. SQL 스키마 환각 및 잘못된 조인을 차단하고 85개 이상의 MCP Tools를 제공하는 순수 Go 기반 엔터프라이즈 AI 데이터베이스 에이전트.">
   <meta name="keywords" content="JAMYPG, NL2SQL, MCP, Model Context Protocol, PostgreSQL, MySQL, MariaDB, Text to SQL, Go, Database AI Agent, OpenMetadata, DBA Copilot">
   <meta name="author" content="HKJang / JAMYPG Project">
   <meta name="robots" content="index, follow">
@@ -165,11 +165,11 @@
       </a>
 
       <ul class="nav-links">
-        <li><a href="#features" data-ko="주요 기능" data-en="Features">주요 기능</a></li>
-        <li><a href="#architecture" data-ko="아키텍처" data-en="Architecture">아키텍처</a></li>
-        <li><a href="#databases" data-ko="지원 DB" data-en="Databases">지원 DB</a></li>
-        <li><a href="#mcp-tools" data-ko="MCP 도구" data-en="MCP Tools">MCP 도구</a></li>
-        <li><a href="#quickstart" data-ko="빠른 시작" data-en="Quick Start">빠른 시작</a></li>
+        <li><a href="#features" data-ko="Core Features" data-en="Features">Core Features</a></li>
+        <li><a href="#architecture" data-ko="Architecture" data-en="Architecture">Architecture</a></li>
+        <li><a href="#databases" data-ko="Supported DBs" data-en="Databases">Supported DBs</a></li>
+        <li><a href="#mcp-tools" data-ko="MCP Tools" data-en="MCP Tools">MCP Tools</a></li>
+        <li><a href="#quickstart" data-ko="Quickstart" data-en="Quick Start">Quickstart</a></li>
         <li><a href="#faq" data-ko="FAQ" data-en="FAQ">FAQ</a></li>
       </ul>
 
@@ -195,7 +195,7 @@
   <header class="hero container">
     <div class="hero-badge">
       <span class="pulse-dot"></span>
-      <span data-ko="v0.58.0 출시 • Multi-DB NL2SQL MCP 엔진" data-en="v0.58.0 Released • Multi-DB NL2SQL MCP Engine">v0.58.0 출시 • Multi-DB NL2SQL MCP 엔진</span>
+      <span data-ko="v0.58.0 Released • Multi-DB NL2SQL MCP Engine" data-en="v0.58.0 Released • Multi-DB NL2SQL MCP Engine">v0.58.0 Released • Multi-DB NL2SQL MCP Engine</span>
     </div>
 
     <h1 class="hero-title" 
@@ -205,14 +205,14 @@
     </h1>
 
     <p class="hero-subtitle"
-       data-ko="PostgreSQL, MySQL, MariaDB를 완벽 지원하는 순수 Go 기반 NL2SQL MCP 서버. 스키마 환각 0%, 85개 이상의 MCP 도구, 읽기 전용 보안 쿼리 실행으로 AI 데이터 분석을 완성합니다."
+       data-ko="PostgreSQL, MySQL, MariaDB를 완벽 지원하는 순수 Go 기반 NL2SQL MCP 서버. 스키마 환각 0%, 85개 이상의 MCP Tools, 읽기 전용 보안 쿼리 실행으로 AI 데이터 분석을 완성합니다."
        data-en="Pure Go-based NL2SQL MCP server supporting PostgreSQL, MySQL, and MariaDB. Zero schema hallucination, 85+ MCP tools, and safe read-only execution for enterprise AI data analytics.">
-      PostgreSQL, MySQL, MariaDB를 완벽 지원하는 순수 Go 기반 NL2SQL MCP 서버. 스키마 환각 0%, 85개 이상의 MCP 도구, 읽기 전용 보안 쿼리 실행으로 AI 데이터 분석을 완성합니다.
+      PostgreSQL, MySQL, MariaDB를 완벽 지원하는 순수 Go 기반 NL2SQL MCP 서버. 스키마 환각 0%, 85개 이상의 MCP Tools, 읽기 전용 보안 쿼리 실행으로 AI 데이터 분석을 완성합니다.
     </p>
 
     <div class="hero-ctas">
-      <a href="#quickstart" class="btn btn-primary" data-ko="🚀 빠른 시작하기" data-en="🚀 Quick Start Guide">🚀 빠른 시작하기</a>
-      <a href="https://github.com/hkjang/jamypg/blob/main/docs/README.md" target="_blank" class="btn btn-secondary" data-ko="📚 상세 문서 보기" data-en="📚 Read Documentation">📚 상세 문서 보기</a>
+      <a href="#quickstart" class="btn btn-primary" data-ko="🚀 Quickstart" data-en="🚀 Quick Start Guide">🚀 Quickstart</a>
+      <a href="https://github.com/hkjang/jamypg/blob/main/docs/README.md" target="_blank" class="btn btn-secondary" data-ko="📚 View Detailed Docs" data-en="📚 Read Documentation">📚 View Detailed Docs</a>
     </div>
 
     <!-- Interactive Workflow Simulator Terminal -->
@@ -233,12 +233,12 @@
       <div class="simulator-body">
         <!-- Step 1 -->
         <div class="sim-step active" id="sim-1">
-          <p class="code-comment">// [Input] 자연어 질문 전달</p>
+          <p class="code-comment">// [Input] Natural Language Question</p>
           <p><span class="code-func">prepare_sql_context</span>({</p>
-          <p>&nbsp;&nbsp;<span class="code-key">"question"</span>: <span class="code-string">"최근 6개월간 신용카드 결제 건수가 가장 높은 고객 Top 5"</span></p>
+          <p>&nbsp;&nbsp;<span class="code-key">"question"</span>: <span class="code-string">"Top 5 Customers with Highest Credit Card Payments in Past 6 Months"</span></p>
           <p>})</p>
           <br>
-          <p class="code-comment">// [Response] 메타 카탈로그 검색, 지표 매칭, 조인 그래프 및 SQL 골격 자동 생성</p>
+          <p class="code-comment">// [Response] Catalog Search, Metric Matching, Join Graph & SQL Skeleton Auto-Generation</p>
           <p>{</p>
           <p>&nbsp;&nbsp;<span class="code-key">"status"</span>: <span class="code-string">"ready"</span>,</p>
           <p>&nbsp;&nbsp;<span class="code-key">"selected_tables"</span>: [<span class="code-string">"customers"</span>, <span class="code-string">"payments"</span>],</p>
@@ -249,13 +249,13 @@
 
         <!-- Step 2 -->
         <div class="sim-step" id="sim-2">
-          <p class="code-comment">// [Input] 방언 파서 & 카탈로그 기반 정적 SQL 검증</p>
+          <p class="code-comment">// [Input] Natural Language Prompt
           <p><span class="code-func">validate_sql</span>({</p>
           <p>&nbsp;&nbsp;<span class="code-key">"sql"</span>: <span class="code-string">"SELECT c.customer_name, COUNT(p.payment_id) ..."</span>,</p>
           <p>&nbsp;&nbsp;<span class="code-key">"profile"</span>: <span class="code-string">"postgres-prod"</span></p>
           <p>})</p>
           <br>
-          <p class="code-comment">// [Response] 컬럼/조인/방언/PII 검증 통과 (Valid)</p>
+          <p class="code-comment">// [Response] Grounded SQL Context
           <p>{</p>
           <p>&nbsp;&nbsp;<span class="code-key">"valid"</span>: <span class="code-keyword">true</span>,</p>
           <p>&nbsp;&nbsp;<span class="code-key">"dialect"</span>: <span class="code-string">"postgres"</span>,</p>
@@ -266,13 +266,13 @@
 
         <!-- Step 3 -->
         <div class="sim-step" id="sim-3">
-          <p class="code-comment">// [Input] Read-Only 세션 안전 실행 (Timeout & Row Limit 적용)</p>
+          <p class="code-comment">// [Input] Natural Language Prompt
           <p><span class="code-func">run_sql_safely</span>({</p>
           <p>&nbsp;&nbsp;<span class="code-key">"profile"</span>: <span class="code-string">"auto"</span>,</p>
           <p>&nbsp;&nbsp;<span class="code-key">"sql"</span>: <span class="code-string">"SELECT c.customer_name, COUNT(p.payment_id) ..."</span></p>
           <p>})</p>
           <br>
-          <p class="code-comment">// [Response] 안전한 데이터 조회 결과 반환</p>
+          <p class="code-comment">// [Response] Grounded SQL Context
           <p>{</p>
           <p>&nbsp;&nbsp;<span class="code-key">"executed"</span>: <span class="code-keyword">true</span>,</p>
           <p>&nbsp;&nbsp;<span class="code-key">"row_count"</span>: <span class="code-number">5</span>,</p>
@@ -287,7 +287,7 @@
     <div class="stats-bar">
       <div class="stat-item">
         <div class="stat-number">85+</div>
-        <div class="stat-label" data-ko="MCP 도구 & 프로토콜 API" data-en="MCP Tools & Protocol APIs">MCP 도구 & 프로토콜 API</div>
+        <div class="stat-label" data-ko="MCP Tools & 프로토콜 API" data-en="MCP Tools & Protocol APIs">MCP Tools & 프로토콜 API</div>
       </div>
       <div class="stat-item">
         <div class="stat-number">3 Target</div>
@@ -334,7 +334,7 @@
       <!-- 03 -->
       <div class="feature-card">
         <div class="feature-icon">🛠️</div>
-        <h3 class="feature-title" data-ko="03. 85개 이상의 MCP 도구" data-en="03. 85+ Comprehensive MCP Tools">03. 85개 이상의 MCP 도구</h3>
+        <h3 class="feature-title" data-ko="03. 85개 이상의 MCP Tools" data-en="03. 85+ Comprehensive MCP Tools">03. 85개 이상의 MCP Tools</h3>
         <p class="feature-desc" data-ko="prepare_sql_context를 포함한 NL2SQL 파프라인부터 DBA 헬스 점검(db_health_report), 인덱스 추천(suggest_indexes), 워크로드 집계(workload_report)까지 폭넓은 도구를 제공합니다." data-en="From core NL2SQL workflow helpers to automated DBA health diagnostics, index suggestions, and workload analytics, fully accessible to AI agents.">
           prepare_sql_context를 포함한 NL2SQL 파프라인부터 DBA 헬스 점검(db_health_report), 인덱스 추천(suggest_indexes), 워크로드 집계(workload_report)까지 폭넓은 도구를 제공합니다.
         </p>
@@ -484,7 +484,7 @@
   <section id="mcp-tools" class="section container">
     <div class="section-header">
       <span class="section-tag" data-ko="MCP 스펙" data-en="MCP Toolset">MCP 스펙</span>
-      <h2 class="section-title" data-ko="엔터프라이즈 MCP 도구 카탈로그" data-en="Enterprise MCP Tool Catalog">엔터프라이즈 MCP 도구 카탈로그</h2>
+      <h2 class="section-title" data-ko="엔터프라이즈 MCP Tools 카탈로그" data-en="Enterprise MCP Tool Catalog">엔터프라이즈 MCP Tools 카탈로그</h2>
       <p class="section-desc" data-ko="LLM AI 에이전트가 데이터베이스 탐색, NL2SQL 생성, DBA 진단 및 카탈로그 관리를 수행할 수 있는 85종의 대표 도구입니다." data-en="A curated view of the 85+ high-performance tools exposed to AI agents over stdio and HTTP MCP endpoints.">LLM AI 에이전트가 데이터베이스 탐색, NL2SQL 생성, DBA 진단 및 카탈로그 관리를 수행할 수 있는 85종의 대표 도구입니다.</p>
     </div>
 
@@ -605,8 +605,8 @@
 
       <!-- HTTP -->
       <div class="code-block-wrapper code-content" id="code-http">
-        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
-        <pre><code># 1. 로컬 HTTP MCP 서버 및 Web Admin 기동 (포트 9797)
+        <button class="copy-btn" data-ko="Copy" data-en="Copy">Copy</button>
+        <pre><code># Step initialization
 go run ./cmd/jamypg-mcp -transport http -data ./data/metadb -addr 127.0.0.1:9797
 
 # 진입점 URL:
@@ -618,7 +618,7 @@ go run ./cmd/jamypg-mcp -transport http -data ./data/metadb -addr 127.0.0.1:9797
 
       <!-- Docker -->
       <div class="code-block-wrapper code-content" id="code-docker" style="display: none;">
-        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <button class="copy-btn" data-ko="Copy" data-en="Copy">Copy</button>
         <pre><code># Docker 이미지 빌드 및 컨테이너 실행
 docker build -t jamypg-mcp:v0.58.0 .
 
@@ -629,7 +629,7 @@ docker run --rm -p 9797:9797 \
 
       <!-- stdio -->
       <div class="code-block-wrapper code-content" id="code-stdio" style="display: none;">
-        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <button class="copy-btn" data-ko="Copy" data-en="Copy">Copy</button>
         <pre><code>// claude_desktop_config.json 설정 예시
 {
   "mcpServers": {
@@ -646,7 +646,7 @@ docker run --rm -p 9797:9797 \
 
       <!-- Test -->
       <div class="code-block-wrapper code-content" id="code-test" style="display: none;">
-        <button class="copy-btn" data-ko="복사" data-en="Copy">복사</button>
+        <button class="copy-btn" data-ko="Copy" data-en="Copy">Copy</button>
         <pre><code># 통합 테스트용 DB 3종 (Postgres, MySQL, MariaDB) 띄우기
 docker compose -f deploy/test/docker-compose.yml up -d
 
@@ -659,7 +659,7 @@ go test -tags integration ./test/integration -v</code></pre>
   <!-- FAQ Section (AEO & LLM Search Optimized) -->
   <section id="faq" class="section container">
     <div class="section-header">
-      <span class="section-tag" data-ko="자주 묻는 질문" data-en="Frequently Asked Questions">자주 묻는 질문</span>
+      <span class="section-tag" data-ko="Frequently Asked Questions" data-en="Frequently Asked Questions">Frequently Asked Questions</span>
       <h2 class="section-title" data-ko="궁금한 점을 확인하세요 (FAQ)" data-en="FAQ & Knowledge Base">궁금한 점을 확인하세요 (FAQ)</h2>
       <p class="section-desc" data-ko="JAMYPG의 동작 방식, 보안 매커니즘, AI 검색 엔진 및 LLM 연동에 관한 명쾌한 답변입니다." data-en="Clear answers regarding architecture, security, read-only enforcement, and LLM integrations.">JAMYPG의 동작 방식, 보안 매커니즘, AI 검색 엔진 및 LLM 연동에 관한 명쾌한 답변입니다.</p>
     </div>
@@ -732,8 +732,8 @@ go test -tags integration ./test/integration -v</code></pre>
         <div>
           <h4 class="footer-title" data-ko="문서 & 리소스" data-en="Resources">문서 & 리소스</h4>
           <ul class="footer-links">
-            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/README.md" target="_blank" data-ko="아키텍처 문서" data-en="Architecture Docs">아키텍처 문서</a></li>
-            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/mcp-tools-reference.md" target="_blank" data-ko="MCP 도구 레퍼런스 (85종)" data-en="MCP Tool Reference (85)">MCP 도구 레퍼런스 (85종)</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/README.md" target="_blank" data-ko="Architecture 문서" data-en="Architecture Docs">Architecture 문서</a></li>
+            <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/mcp-tools-reference.md" target="_blank" data-ko="MCP Tools 레퍼런스 (85종)" data-en="MCP Tool Reference (85)">MCP Tools 레퍼런스 (85종)</a></li>
             <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/db-connector.md" target="_blank" data-ko="DB 커넥터 가이드" data-en="DB Connector Guide">DB 커넥터 가이드</a></li>
             <li><a href="https://github.com/hkjang/jamypg/blob/main/docs/rest-api.md" target="_blank" data-ko="REST API 가이드" data-en="REST API Guide">REST API 가이드</a></li>
           </ul>
